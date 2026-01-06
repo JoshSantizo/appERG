@@ -1,0 +1,474 @@
+openapi: 3.0.0
+info:
+  title: API SistemaERG - Gestión Eclesiástica
+  version: 1.0.0
+  description: Documentación de los endpoints del backend SistemaERG para gestión de Casas de Paz, Miembros y Roles.
+servers:
+  - url: http://localhost:4000/api
+    description: Servidor de Desarrollo Local
+tags:
+  - name: Autenticación
+    description: Inicio de sesión y manejo de tokens
+  - name: Liderazgo
+    description: Endpoints para los roles de Líder (CdP) y Líder de Subred (LSR)
+  - name: Reporting
+    description: Endpoints de Reportes Semanales y Métrica de Retención (Líder/LSR)
+  - name: Administración
+    description: Endpoints de gestión global para Super Admin y Admin
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    UsuarioLogin:
+      type: object
+      properties:
+        nombre:
+          type: string
+          example: SuperAdmin.123
+        contraseña:
+          type: string
+          format: password
+          example: SA123.456
+    PromoverLSR:
+      type: object
+      properties:
+        id_usuario: {type: integer, example: 7}
+        action: {type: string, example: "promote", enum: [promote, demote], description: "Acción a realizar: promover a Rol 4 o degradar a Rol 6."}
+    NuevaRed:
+      type: object
+      properties:
+        nombre_red: {type: string, example: "Red Este"}
+    ResumenVision:
+      type: object
+      properties:
+        fase: {type: string, example: "Escuela de Miembros"}
+        total: {type: integer, example: 10}
+
+paths:
+  /auth/login:
+    post:
+      tags:
+        - Autenticación
+      summary: Iniciar Sesión y obtener JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsuarioLogin'
+      responses:
+        '200':
+          description: Login exitoso. Retorna JWT.
+        '401':
+          description: Credenciales inválidas.
+
+  /lider/miembros:
+    get:
+      tags:
+        - Liderazgo
+      summary: Lista los miembros de la Casa de Paz del líder loggeado (Rol 5).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado exitoso de miembros.
+        '401':
+          description: Token inválido o expirado.
+        '403':
+          description: Rol no autorizado.
+    post:
+      tags:
+        - Liderazgo
+      summary: Registra un nuevo miembro asignándolo automáticamente a la CdP del líder (Rol 5).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nombre: {type: string}
+                telefono: {type: string}
+                sexo: {type: string}
+                fecha_nacimiento: {type: string, format: date}
+      responses:
+        '201':
+          description: Miembro creado exitosamente.
+    put:
+      tags:
+        - Liderazgo
+      summary: Actualiza datos de un miembro específico (Roles 5, 4, 1, 2).
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: ID del miembro a modificar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                telefono: {type: string, description: "Nuevo número de teléfono (opcional)"}
+                estado: {type: string, enum: [Activo, Inactivo], description: "Nuevo estado (opcional)"}
+      responses:
+        '200':
+          description: Miembro actualizado exitosamente.
+        '403':
+          description: Acceso denegado.
+    delete:
+      tags:
+        - Liderazgo
+      summary: Realiza una eliminación lógica (cambia el estado a 'Inactivo') del miembro (Roles 5, 4, 1, 2).
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: ID del miembro a desactivar.
+      responses:
+        '200':
+          description: Eliminación lógica exitosa.
+        '403':
+          description: Acceso denegado por rol o pertenencia a CdP.
+        '404':
+          description: Miembro no encontrado.
+
+  /lsr/miembros:
+    get:
+      tags:
+        - Liderazgo
+      summary: Lista todos los miembros de las Casas de Paz bajo la supervisión del LSR loggeado (Rol 4).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado exitoso de miembros supervisados.
+
+  # ------------------------------------------------------
+  # FASE 10.3: ANALÍTICA DE SUBRED (LSR ACCESS)
+  # ------------------------------------------------------
+  /lsr/vision/resumen:
+    get:
+      tags:
+        - Liderazgo
+      summary: "[LSR/Admin] Resumen consolidado de miembros por fase de la Visión para la subred supervisada."
+      description: Calcula el conteo de miembros activos agrupados por su fase de la visión más reciente, limitado a las Casas de Paz asignadas al LSR loggeado.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Conteo de miembros por fase de la visión.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resumen_vision:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ResumenVision'
+        '404':
+          description: No se encontraron miembros activos en la subred.
+
+  # ------------------------------------------------------
+  # FASE 10.2: GESTIÓN DE LSRS (SUPER ADMIN)
+  # ------------------------------------------------------
+  /admin/lsr/rol:
+    post:
+      tags:
+        - Administración
+      summary: "[SUPER ADMIN] Gestiona el Rol (promueve a 4 o degrada) de un usuario."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoverLSR'
+      responses:
+        '200':
+          description: Rol del usuario modificado exitosamente.
+        '404':
+          description: Usuario no encontrado.
+
+  /admin/lsr/todos:
+    get:
+      tags:
+        - Administración
+      summary: "[SUPER ADMIN] Lista todos los LSRs (Rol 4) con las Redes/CdPs que supervisan (implícitamente)."
+      description: Obtiene la lista de todos los Líderes de Subred (LSR) y consolida la información de las Redes y el total de Casas de Paz que supervisan a través de la tabla CasasDePaz.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado consolidado de Líderes de Subred.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lsrs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id_lsr: {type: integer}
+                        nombre_lsr: {type: string}
+                        total_cdp_global: {type: integer}
+                        redes_supervisadas:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id_red: {type: integer}
+                              nombre_red: {type: string}
+                              total_cdp: {type: integer}
+        '404':
+          description: No se encontraron LSRs.
+  
+  /admin/miembros/todos:
+    get:
+      tags:
+        - Administración
+      summary: Obtiene la lista completa de todos los miembros del sistema.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado exitoso de todos los miembros.
+
+  /admin/cdp/todas:
+    get:
+      tags:
+        - Administración
+      summary: Obtiene la lista completa de todas las Casas de Paz con sus métricas.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado exitoso de todas las Casas de Paz.
+          
+  # ------------------------------------------------------
+  # FASE 10.1: GESTIÓN DE REDES (SUPER ADMIN)
+  # ------------------------------------------------------
+  /admin/redes:
+    post:
+      tags:
+        - Administración
+      summary: "[SUPER ADMIN] Crea una nueva Red en el sistema."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NuevaRed'
+      responses:
+        '201':
+          description: Red creada exitosamente.
+    get:
+      tags:
+        - Administración
+      summary: "[SUPER ADMIN] Lista todas las Redes con el conteo de CdPs asignadas."
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado de Redes.
+
+  /admin/redes/{id_red}:
+    put:
+      tags:
+        - Administración
+      summary: "[SUPER ADMIN] Actualiza el nombre de una Red."
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id_red
+          schema:
+            type: integer
+          required: true
+          description: ID de la Red a modificar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NuevaRed'
+      responses:
+        '200':
+          description: Red actualizada exitosamente.
+          
+  # ------------------------------------------------------
+  # FASE 8: REPORTING (LÍDER / LSR)
+  # ------------------------------------------------------
+  /reportes/lider:
+    get:
+      tags:
+        - Reporting
+      summary: Lista de Reportes CDP creados por el Líder (o los visibles para el LSR).
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: id_lider
+          schema:
+            type: integer
+          description: Opcional. ID del Líder (solo para LSR/Admin) para filtrar. Si se omite, usa el ID del token.
+      responses:
+        '200':
+          description: Listado exitoso de reportes.
+
+  /reportes/cdp/detalle/{id_reporte_cdp}:
+    get:
+      tags:
+        - Reporting
+      summary: Obtiene el detalle completo de un Reporte CDP específico (asistencia, visitas, finanzas).
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id_reporte_cdp
+          schema:
+            type: integer
+          required: true
+          description: ID del Reporte CDP a detallar.
+      responses:
+        '200':
+          description: Detalle completo del reporte.
+
+  /reportes/seguimiento/pendiente:
+    get:
+      tags:
+        - Reporting
+      summary: Obtiene la lista de visitas que requieren seguimiento ('Activo').
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Listado de visitas con seguimiento activo/pendiente.
+
+  /reportes/miembros/inconstantes:
+    get:
+      tags:
+        - Reporting
+      summary: Analítica de Retención. Miembros con 0 asistencias en los últimos N reportes.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: n
+          schema:
+            type: integer
+            default: 3
+          description: Número de reportes a evaluar (por defecto: 3).
+      responses:
+        '200':
+          description: Listado de miembros inconstantes.
+        '404':
+          description: No se encontraron miembros inconstantes.
+
+  /reportes/seguimiento/detalle/{id_seguimiento}:
+    get:
+      tags:
+        - Reporting
+      summary: Obtiene la información de la visita asociada y el historial de notas de seguimiento.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id_seguimiento
+          schema:
+            type: integer
+          required: true
+          description: ID del Seguimiento a detallar.
+      responses:
+        '200':
+          description: Detalle de seguimiento y notas asociadas.
+
+  # ------------------------------------------------------
+  # FASE 9: ANALÍTICA (ADMIN / SUPER ADMIN)
+  # ------------------------------------------------------
+  /reportes/admin/vision/resumen:
+    get:
+      tags:
+        - Administración
+      summary: "[ADMIN] Resumen global de miembros por fase de la visión (Ganar, Consolidar, etc.)."
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Conteo total de miembros por cada fase.
+
+  /reportes/admin/ofrendas/resumen:
+    get:
+      tags:
+        - Administración
+      summary: "[ADMIN] Consolidado financiero (Ofrendas, Diezmos, etc.) por Líder/CdP en un rango de fechas."
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: fecha_inicio
+          schema:
+            type: string
+            format: date
+          required: true
+        - in: query
+          name: fecha_fin
+          schema:
+            type: string
+            format: date
+          required: true
+      responses:
+        '200':
+          description: Consolidado de métricas financieras.
+
+  /reportes/admin/asistencia/global:
+    get:
+      tags:
+        - Administración
+      summary: "[ADMIN] Agregación global de asistencia, conversiones y reconciliaciones por periodo."
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: fecha_inicio
+          schema:
+            type: string
+            format: date
+          required: true
+        - in: query
+          name: fecha_fin
+          schema:
+            type: string
+            format: date
+          required: true
+        - in: query
+          name: periodo
+          schema:
+            type: string
+            enum: [week, month, year]
+            default: month
+          description: Nivel de agrupación temporal.
+      responses:
+        '200':
+          description: Métricas agregadas por periodo.
