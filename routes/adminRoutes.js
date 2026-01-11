@@ -4,7 +4,9 @@ const { verifyToken, authorizeRoles } = require('../middlewares/authMiddleware')
 const adminController = require('../controllers/adminController'); 
 const userAdminController = require('../controllers/userAdminController');
 const memberController = require('../controllers/memberController'); // <--- Importar MemberController
-const ROLES = require('../constants/roles'); 
+const ROLES = require('../constants/roles');
+const liderController = require('../controllers/liderController'); // <--- AÑADE ESTO
+
 
 // Roles de Nivel Superior (quienes pueden ver métricas generales)
 const ROLES_ACCESO_TOTAL = [
@@ -29,6 +31,7 @@ const SUPER_ADMIN_ROLE = [ROLES.SUPER_ADMIN]; // Rol 1
 router.post('/redes', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.createRed);
 router.get('/redes', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.getAllRedes);
 router.put('/redes/:id_red', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.updateRed);
+
 
 // --------------------------------------------------------------------------
 // 1. RUTAS DE REPORTES (Se mantienen iguales)
@@ -218,6 +221,38 @@ router.post(
 // --- GESTIÓN DE LSRS (ROLES 4) ---
 router.post('/lsr/rol', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.manageLsrRole);
 router.get('/lsr/todos', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.getAllLsrs);
+
+router.post('/seguimiento-nota', verifyToken, authorizeRoles(ADMIN_ROLES), liderController.addNotaSeguimiento);
+
+// --- GESTIÓN AVANZADA DE VISITAS (Solo Admin) ---
+
+// [PUT] Editar datos de la visita
+router.put(
+    '/visita/:id', 
+    verifyToken, 
+    authorizeRoles(ADMIN_ROLES), 
+    adminController.updateVisitaAdmin
+);
+
+// [DELETE] Eliminar visita y su seguimiento
+router.delete(
+    '/visita/:id', 
+    verifyToken, 
+    authorizeRoles(ADMIN_ROLES), 
+    adminController.deleteVisitaAdmin
+);
+
+router.get('/seguimientos/todos', verifyToken, authorizeRoles(ADMIN_ROLES), adminController.getAllSeguimientosAdmin);
+
+router.post(
+    '/visita-manual', 
+    verifyToken, 
+    authorizeRoles(ADMIN_ROLES), 
+    adminController.createVisitaAdministrativa
+);
+
+// Resetear contraseña de otros (Solo Admin)
+router.put('/reset-password-lider', verifyToken, authorizeRoles([1, 2]), adminController.resetPasswordByAdmin);
 
 module.exports = router;
 

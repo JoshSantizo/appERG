@@ -1,6 +1,8 @@
 const db = require('../config/db');
 const ROLES = require('../constants/roles');
 const { query } = require('express');
+const bcrypt = require('bcrypt');
+
 
 // Función auxiliar para calcular la edad (reutilizada)
 const calcularEdad = (fechaNacimiento) => {
@@ -1156,6 +1158,145 @@ const getAllLsrs = async (req, res) => {
     }
 };
 
+// ADMINISTRACIÓN ASIGNA UN SEGUIMIENTO
+const createVisitaAdministrativa = async (req, res) => {
+    // Los administradores eligen a quién asignar
+    const { 
+        nombre, telefono, direccion, tipo, decision,
+        id_lsr_responsable, // Obligatorio para que la red lo vea
+        id_lider_responsable // Opcional (si se quiere asignar a alguien específico)
+    } = req.body;
+
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Insertar la visita (id_reporte_cdp es NULL porque es administrativa)
+        const visitaQuery = `
+            INSERT INTO public."VisitasCdP" 
+            (id_reporte_cdp, nombre, telefono, direccion, tipo, decision)
+            VALUES (NULL, $1, $2, $3, $4, $5) RETURNING id_visita;
+        `;
+        const visitaRes = await client.query(visitaQuery, [nombre, telefono, direccion, tipo, decision]);
+        const id_visita = visitaRes.rows[0].id_visita;
+
+        // 2. Crear el seguimiento con los responsables asignados manualmente
+        await client.query(
+            `INSERT INTO public."Seguimiento" (id_visita, estado, id_lsr_responsable, id_lider_responsable) 
+             VALUES ($1, 'Activo', $2, $3)`,
+            [id_visita, id_lsr_responsable, id_lider_responsable || null]
+        );
+
+        await client.query('COMMIT');
+        res.status(201).json({ mensaje: 'Visita administrativa registrada y asignada correctamente.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ mensaje: 'Error al registrar visita administrativa.' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * [PUT] /api/admin/visita/:id
+ * Permite a administración corregir datos de una visita.
+ */
+const updateVisitaAdmin = async (req, res) => {
+    const { id } = req.params; // ID de la VISITA
+    const { nombre, telefono, direccion, referencia, tipo, decision } = req.body;
+
+    try {
+        const query = `
+            UPDATE public."VisitasCdP" 
+            SET nombre = $1, telefono = $2, direccion = $3, referencia = $4, tipo = $5, decision = $6
+            WHERE id_visita = $7
+            RETURNING *;
+        `;
+        const result = await db.query(query, [nombre, telefono, direccion, referencia, tipo, decision, id]);
+
+        if (result.rows.length === 0) return res.status(404).json({ mensaje: 'Visita no encontrada.' });
+
+        res.status(200).json({ mensaje: 'Datos de visita corregidos con éxito.', visita: result.rows[0] });
+    } catch (error) {
+        console.error("❌ Error al editar visita:", error.message);
+        res.status(500).json({ mensaje: 'Error al actualizar los datos.' });
+    }
+};
+
+/**
+ * [DELETE] /api/admin/visita/:id
+ * Elimina la visita y detiene el seguimiento (borrado físico o lógico).
+ */
+const deleteVisitaAdmin = async (req, res) => {
+    const { id } = req.params; // ID de la VISITA
+    const client = await db.getClient();
+
+    try {
+        await client.query('BEGIN');
+        // El borrado en cascada en la DB se encarga de Notas y Seguimiento
+        // pero lo hacemos explícito para mayor seguridad
+        await client.query('DELETE FROM public."Seguimiento" WHERE id_visita = $1', [id]);
+        await client.query('DELETE FROM public."VisitasCdP" WHERE id_visita = $1', [id]);
+
+        await client.query('COMMIT');
+        res.status(200).json({ mensaje: 'Visita eliminada. El seguimiento ya no aparecerá al líder.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ mensaje: 'Error al eliminar la visita.' });
+    } finally {
+        client.release();
+    }
+};
+const getAllSeguimientosAdmin = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                s.id_seguimiento, s.estado, v.nombre AS nombre_visita, 
+                v.id_visita, u.nombre AS lider_responsable
+            FROM public."Seguimiento" s
+            JOIN public."VisitasCdP" v ON s.id_visita = v.id_visita
+            LEFT JOIN public."Usuarios" u ON s.id_lider_responsable = u.id_usuario
+            ORDER BY s.id_seguimiento DESC;
+        `;
+        const result = await db.query(query);
+        res.status(200).json(result.rows);
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al listar todos los seguimientos.' });
+    }
+};
+
+const resetPasswordByAdmin = async (req, res) => {
+    const { id_usuario_destino, nuevaPassword } = req.body;
+
+    if (!id_usuario_destino || !nuevaPassword) {
+        return res.status(400).json({ mensaje: 'Debe proporcionar el ID del usuario y la nueva contraseña.' });
+    }
+
+    try {
+        // 1. Hashear la nueva contraseña
+        const salt = await bcrypt.genSalt(10);
+        const nuevoHash = await bcrypt.hash(nuevaPassword, salt);
+
+        // 2. Actualizar al usuario objetivo
+        const result = await db.query(
+            'UPDATE public."Usuarios" SET contraseña_hash = $1 WHERE id_usuario = $2 RETURNING nombre',
+            [nuevoHash, id_usuario_destino]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ mensaje: 'Usuario no encontrado.' });
+        }
+
+        return res.status(200).json({ 
+            mensaje: `Contraseña de "${result.rows[0].nombre}" restablecida exitosamente.` 
+        });
+
+    } catch (error) {
+        console.error('❌ Error en resetPasswordByAdmin:', error);
+        return res.status(500).json({ mensaje: 'Error al restablecer la contraseña.' });
+    }
+};
+
 module.exports = {
     getAllMiembros,
     getAllCasasDePaz,
@@ -1173,6 +1314,12 @@ module.exports = {
     getAllRedes,
     updateRed,
     manageLsrRole,
-    getAllLsrs
+    getAllLsrs,
+    createVisitaAdministrativa,
+    updateVisitaAdmin,
+    deleteVisitaAdmin,
+    getAllSeguimientosAdmin,
+    resetPasswordByAdmin
 };
+
 

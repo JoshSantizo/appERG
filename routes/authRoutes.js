@@ -1,9 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const authController = require('../controllers/authController'); // <--- DEBE EXISTIR
+const authController = require('../controllers/authController');
+const { verifyToken } = require('../middlewares/authMiddleware');
+
 
 // [POST] /api/auth/login
-// Permite al usuario iniciar sesión y recibir un token JWT
-router.post('/login', authController.login); // <--- authController.login AHORA ES UNA FUNCIÓN
+router.post('/login', authController.login);
+
+// Ruta protegida para cualquier usuario logueado
+router.put('/update-password', verifyToken, authController.updatePassword);
 
 module.exports = router;

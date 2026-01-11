@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const reportingRoutes = require('./routes/reportingRoutes');
 const memberRoutes = require('./routes/memberRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 // --- 1. CONFIGURACIÓN INICIAL ---
 dotenv.config();
@@ -27,7 +28,6 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 const authRoutes = require('./routes/authRoutes');
 const liderRoutes = require('./routes/liderRoutes');
 const lsrRoutes = require('./routes/lsrRoutes');
-const adminRoutes = require('./routes/adminRoutes');
 
 
 // --- 4. DEFINICIÓN DE RUTAS ---
@@ -38,7 +38,6 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/reportes', reportingRoutes);
 app.use('/api/miembros', memberRoutes);
 app.use('/api/reportes', reportRoutes);
-app.use('/api/admin', adminRoutes);
 
 // Ruta de prueba
 app.get('/', (req, res) => {

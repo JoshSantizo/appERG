@@ -190,7 +190,7 @@ const updateMiembro = async (req, res) => {
     }
 
     try {
-        // 1. Obtener la CdP del miembro objetivo
+        // 1. Obtener la CdP del miembro objetivo para validar propiedad
         const miembroQuery = `SELECT id_cdp FROM "Miembros" WHERE id_miembro = $1`;
         const miembroResult = await db.query(miembroQuery, [idMiembro]);
 
@@ -199,42 +199,54 @@ const updateMiembro = async (req, res) => {
         }
         const id_cdp_objetivo = miembroResult.rows[0].id_cdp;
 
+        // 2. Lógica de Permisos (Validación Jerárquica)
+        const esAdminTotal = rolUsuario === ROLES.SUPER_ADMIN || rolUsuario === ROLES.ADMINISTRACION;
         
-        // 2. Lógica de Permisos (Autorización compleja)
-        let tienePermisoTotal = rolUsuario === ROLES.SUPER_ADMIN || rolUsuario === ROLES.LSR || rolUsuario === ROLES.ADMINISTRACION;
-        
-        if (!tienePermisoTotal) {
-            if (rolUsuario === ROLES.LIDER) {
+        if (!esAdminTotal) {
+            if (rolUsuario === ROLES.LSR) {
+                // VALIDACIÓN LSR: ¿La CdP del miembro pertenece a este LSR?
+                const lsrCdpQuery = `SELECT id_cdp FROM "CasasDePaz" WHERE id_cdp = $1 AND id_lsr = $2`;
+                const lsrCdpResult = await db.query(lsrCdpQuery, [id_cdp_objetivo, idUsuario]);
+
+                if (lsrCdpResult.rows.length === 0) {
+                    return res.status(403).json({ 
+                        mensaje: 'Acceso denegado. Este miembro no pertenece a una Casa de Paz bajo su supervisión.' 
+                    });
+                }
+            } else if (rolUsuario === ROLES.LIDER) {
+                // VALIDACIÓN LÍDER: ¿Es su propia CdP?
                 const liderCdpQuery = `SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1`;
                 const liderCdpResult = await db.query(liderCdpQuery, [idUsuario]);
 
                 if (liderCdpResult.rows.length === 0 || liderCdpResult.rows[0].id_cdp !== id_cdp_objetivo) {
-                    return res.status(403).json({ mensaje: 'Acceso denegado. Solo puede actualizar miembros de su propia Casa de Paz.' });
+                    return res.status(403).json({ 
+                        mensaje: 'Acceso denegado. Solo puede actualizar miembros de su propia Casa de Paz.' 
+                    });
                 }
             } else {
-                return res.status(403).json({ mensaje: 'Acceso denegado. Rol no autorizado para modificar miembros.' });
+                return res.status(403).json({ mensaje: 'Acceso denegado. Rol no autorizado.' });
             }
         }
         
         // 3. Construir la consulta de UPDATE dinámicamente
-        // *** ESTA SECCIÓN FUE CORREGIDA PARA EVITAR EL ERROR DE SINTAXIS SQL PREVIO ***
         const fields = [];
         const values = [];
         let paramIndex = 1;
 
-        if (nombre) {fields.push(`nombre = $${paramIndex++}`); values.push(nombre);}
-        if (telefono) {fields.push(`telefono = $${paramIndex++}`); values.push(telefono);}
-        if (direccion) {fields.push(`direccion = $${paramIndex++}`); values.push(direccion);}
-        if (referencia) {fields.push(`referencia = $${paramIndex++}`); values.push(referencia);}
-        if (sexo) {fields.push(`sexo = $${paramIndex++}`); values.push(sexo);}
-        if (fecha_nacimiento) {fields.push(`fecha_nacimiento = $${paramIndex++}`); values.push(fecha_nacimiento);}
-        if (fecha_conversion) {fields.push(`fecha_conversion = $${paramIndex++}`); values.push(fecha_conversion);}
-        if (fecha_bautizo) {fields.push(`fecha_bautizo = $${paramIndex++}`); values.push(fecha_bautizo);}
-        if (fecha_boda) {fields.push(`fecha_boda = $${paramIndex++}`); values.push(fecha_boda);}
-        if (estado) {fields.push(`estado = $${paramIndex++}`); values.push(estado);}
+        const dataToUpdate = { 
+            nombre, telefono, direccion, referencia, sexo, 
+            fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda, estado 
+        };
+
+        for (const [key, value] of Object.entries(dataToUpdate)) {
+            if (value !== undefined && value !== null) {
+                fields.push(`${key} = $${paramIndex++}`);
+                values.push(value);
+            }
+        }
         
         if (fields.length === 0) {
-            return res.status(400).json({ mensaje: 'Debe proporcionar al menos un campo para actualizar.' });
+            return res.status(400).json({ mensaje: 'Debe proporcionar al menos un campo válido para actualizar.' });
         }
         
         // El ID del miembro siempre es el último parámetro
@@ -248,12 +260,8 @@ const updateMiembro = async (req, res) => {
         
         const result = await db.query(updateQuery, values);
 
-        if (result.rowCount === 0) {
-            return res.status(404).json({ mensaje: 'Error al actualizar: Miembro no encontrado o sin cambios.' });
-        }
-
         return res.status(200).json({
-            mensaje: `Miembro ${result.rows[0].nombre} (ID ${idMiembro}) actualizado exitosamente.`,
+            mensaje: `Miembro ${result.rows[0].nombre} actualizado exitosamente por su supervisor.`,
             miembro_actualizado: result.rows[0]
         });
 
@@ -337,158 +345,7 @@ const deleteMiembro = async (req, res) => {
     }
 };
 
-// --------------------------------------------------------------------------
-// [POST] /api/lider/reporte/crear
-// Crea la entrada principal en la tabla "ReporteCdP".
-// --------------------------------------------------------------------------
-const createReporteCdP = async (req, res) => {
-    const { 
-        id_lider,
-        fecha_reporte, 
-        latitud, 
-        longitud, 
-        ofrendas, 
-        diezmos, 
-        pactos, 
-        primicias, 
-        comentarios 
-    } = req.body;
 
-    const requesterId = parseInt(req.user.id);
-    const idLiderReportado = parseInt(id_lider);
-
-    // 1. Validación de Autorización
-    if (idLiderReportado !== requesterId) {
-        return res.status(403).json({ mensaje: 'Acceso prohibido. No puede crear reportes para otro líder.' });
-    }
-
-    // 2. Validación de Campos Mínimos
-    if (!id_lider || !latitud || !longitud || !fecha_reporte) {
-        return res.status(400).json({ mensaje: 'Faltan campos obligatorios para crear el reporte principal (id_lider, fecha_reporte, latitud, longitud).' });
-    }
-    
-    try {
-        const insertQuery = `
-            INSERT INTO "ReporteCdP" (
-                id_lider, 
-                fecha_reporte, 
-                latitud, 
-                longitud, 
-                ofrendas, 
-                diezmos, 
-                pactos, 
-                primicias, 
-                comentarios
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id_reporte_cdp, fecha_reporte;
-        `;
-        
-        const values = [
-            idLiderReportado, 
-            fecha_reporte, 
-            parseFloat(latitud), 
-            parseFloat(longitud), 
-            parseFloat(ofrendas) || 0.00, 
-            parseFloat(diezmos) || 0.00, 
-            parseFloat(pactos) || 0.00, 
-            parseFloat(primicias) || 0.00, 
-            comentarios || null
-        ];
-
-        const result = await db.query(insertQuery, values);
-        const newReportId = result.rows[0].id_reporte_cdp;
-
-        return res.status(201).json({
-            mensaje: `Reporte principal (Financiero/Logístico) creado exitosamente. Proceda a registrar la asistencia.`,
-            id_reporte_cdp: newReportId,
-            fecha_reporte: fecha_reporte
-        });
-
-    } catch (error) {
-        if (error.code === '23505') { 
-            // Esto solo ocurrirá si añades un UNIQUE(id_lider, fecha_reporte) a tu tabla ReporteCdP
-            return res.status(409).json({ mensaje: `Ya existe un reporte para el líder ${id_lider} en la fecha ${fecha_reporte}.` });
-        }
-        console.error('❌ Error al crear reporte principal de CdP:', error);
-        return res.status(500).json({ 
-            mensaje: 'Error interno del servidor al crear el reporte principal.',
-            error: error.message
-        });
-    }
-};
-
-// --------------------------------------------------------------------------
-// [POST] /api/lider/asistencia/registrar
-// Registra la asistencia detallada en la tabla "AsistenciaCdP".
-// --------------------------------------------------------------------------
-const registerAttendance = async (req, res) => {
-    const { id_reporte_cdp, asistencias } = req.body; // asistencias es un array: [{id_miembro: N, asistio: true/false}]
-    const requesterId = parseInt(req.user.id);
-    const reporteId = parseInt(id_reporte_cdp);
-
-    // 1. Validación de campos
-    if (!reporteId || !Array.isArray(asistencias) || asistencias.length === 0) {
-        return res.status(400).json({ mensaje: 'Datos de asistencia incompletos o en formato incorrecto.' });
-    }
-
-    try {
-        // 2. Validación de Liderazgo sobre el Reporte
-        const reportCheckQuery = `
-            SELECT id_lider 
-            FROM "ReporteCdP" 
-            WHERE id_reporte_cdp = $1
-        `;
-        const reportResult = await db.query(reportCheckQuery, [reporteId]);
-
-        if (reportResult.rows.length === 0) {
-            return res.status(404).json({ mensaje: 'Reporte principal no encontrado.' });
-        }
-        
-        const reportLiderId = reportResult.rows[0].id_lider;
-
-        if (reportLiderId !== requesterId) {
-            return res.status(403).json({ mensaje: 'Acceso prohibido. No es el líder que creó este reporte.' });
-        }
-        
-        // 3. Preparación de la consulta batch para AsistenciaCdP
-        const insertValues = asistencias.map(item => {
-            // Aseguramos que solo los miembros presentes se inserten
-            if (item.asistio === true) {
-                return `(${reporteId}, ${parseInt(item.id_miembro)}, TRUE)`;
-            }
-            return null;
-        }).filter(v => v !== null); // Filtramos los que no asistieron
-
-        if (insertValues.length === 0) {
-            return res.status(200).json({ mensaje: 'Registro de asistencia completado, pero no se registraron asistentes.' });
-        }
-        
-        // Construcción de la consulta de inserción masiva
-        const insertAttendanceQuery = `
-            INSERT INTO "AsistenciaCdP" (id_reporte_cdp, id_miembro, asistio)
-            VALUES ${insertValues.join(', ')}
-            ON CONFLICT (id_reporte_cdp, id_miembro) 
-            DO UPDATE SET asistio = EXCLUDED.asistio;
-        `;
-        
-        await db.query(insertAttendanceQuery);
-
-        return res.status(201).json({
-            mensaje: `Registro de asistencia detallada completado exitosamente para ${insertValues.length} miembro(s).`,
-            id_reporte_cdp: reporteId,
-            asistentes_registrados: insertValues.length
-        });
-
-    } catch (error) {
-        console.error('❌ Error al registrar asistencia detallada:', error);
-        // El error 23503 (Foreign Key Violation) podría saltar si el id_miembro no existe
-        return res.status(500).json({ 
-            mensaje: 'Error interno del servidor al registrar la asistencia.',
-            error: error.message
-        });
-    }
-};
 
 // --------------------------------------------------------------------------
 // [GET] /api/lider/mi-cdp-id
@@ -626,17 +483,449 @@ const getSubredVisionSummary = async (req, res) => {
     }
 };
 
+// --------------------------------------------------------------------------
+// LÓGICA DE REPORTE INTEGRADO (Cabecera + Asistencia + Visitas)
+// --------------------------------------------------------------------------
+/**
+ * [POST] /api/lider/reporte-completo
+ * Procesa todo el reporte en una sola transacción para evitar datos huérfanos.
+ */
+
+const createReporteCompleto = async (req, res) => {
+    const id_lider = req.user.id;
+    const { 
+        fecha_reporte, latitud, longitud, ofrendas, diezmos, pactos, primicias, 
+        metodo_entrega_ofrenda, comentarios, asistencia, visitas 
+    } = req.body;
+
+    // USAMOS getClient() que es como lo tienes en db.js
+    const client = await db.getClient(); 
+
+    try {
+        await client.query('BEGIN');
+
+        // 0. Obtener el LSR del líder para la jerarquía
+        const redQuery = 'SELECT id_lsr FROM "CasasDePaz" WHERE id_lider = $1';
+        const redRes = await client.query(redQuery, [id_lider]);
+        const id_lsr = redRes.rows[0]?.id_lsr;
+
+        // 1. Insertar Cabecera
+        const reportQuery = `
+            INSERT INTO public."ReporteCdP" 
+            (id_lider, fecha_reporte, latitud, longitud, ofrendas, diezmos, pactos, primicias, metodo_entrega_ofrenda, comentarios)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_reporte_cdp;
+        `;
+        const reportRes = await client.query(reportQuery, [
+            id_lider, fecha_reporte, latitud, longitud, 
+            ofrendas || 0, diezmos || 0, pactos || 0, primicias || 0, 
+            metodo_entrega_ofrenda || 'En el servicio', comentarios
+        ]);
+        const id_reporte = reportRes.rows[0].id_reporte_cdp;
+
+        // 2. Insertar Asistencia
+        if (asistencia && asistencia.length > 0) {
+            for (const persona of asistencia) {
+                if (persona.asistio) {
+                    await client.query(
+                        'INSERT INTO public."AsistenciaCdP" (id_reporte_cdp, id_miembro, asistio) VALUES ($1, $2, TRUE)',
+                        [id_reporte, persona.id_miembro]
+                    );
+                }
+            }
+        }
+
+        // 3. Insertar Visitas y Seguimiento
+        if (visitas && visitas.length > 0) {
+            for (const v of visitas) {
+                const visitaQuery = `
+                    INSERT INTO public."VisitasCdP" 
+                    (id_reporte_cdp, nombre, telefono, direccion, referencia, nombre_invitador, asiste_otra_iglesia, nombre_otra_iglesia, tipo, decision)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_visita;
+                `;
+                const visitaRes = await client.query(visitaQuery, [
+                    id_reporte, v.nombre, v.telefono, v.direccion, v.referencia, v.nombre_invitador, 
+                    v.asiste_otra_iglesia || false, v.nombre_otra_iglesia, v.tipo, v.decision
+                ]);
+
+                const id_visita = visitaRes.rows[0].id_visita;
+
+                await client.query(
+                    `INSERT INTO public."Seguimiento" (id_visita, estado, id_lsr_responsable, id_lider_responsable) 
+                     VALUES ($1, 'Activo', $2, $3)`,
+                    [id_visita, id_lsr, id_lider]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json({ mensaje: 'Reporte y seguimientos creados con éxito', id_reporte_cdp: id_reporte });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('❌ Error:', error);
+        res.status(500).json({ mensaje: 'Error al procesar reporte completo' });
+    } finally {
+        client.release(); // LIBERAR EL CLIENTE SIEMPRE
+    }
+};
+
+
+/**
+ * [GET] /api/lider/reporte-detalle/:id
+ * Obtiene el detalle financiero, asistentes y ausentes de un reporte.
+ */
+const getDetalleReporte = async (req, res) => {
+    const id_reporte = req.params.id;
+    const id_lider = req.user.id;
+
+    try {
+        // 1. Obtener datos generales y financieros
+        const infoQuery = `SELECT * FROM "ReporteCdP" WHERE id_reporte_cdp = $1 AND id_lider = $2`;
+        const infoRes = await db.query(infoQuery, [id_reporte, id_lider]);
+
+        if (infoRes.rows.length === 0) {
+            return res.status(404).json({ mensaje: "Reporte no encontrado." });
+        }
+
+        // 2. Obtener lista de asistentes y ausentes en una sola consulta
+        // Usamos un LEFT JOIN entre todos los miembros de la CdP y la tabla de asistencia
+        const asistenciaQuery = `
+            SELECT 
+                m.id_miembro, 
+                m.nombre,
+                CASE WHEN a.id_miembro IS NOT NULL THEN TRUE ELSE FALSE END as asistio
+            FROM "Miembros" m
+            JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
+            LEFT JOIN "AsistenciaCdP" a ON m.id_miembro = a.id_miembro AND a.id_reporte_cdp = $1
+            WHERE c.id_lider = $2 AND m.estado = 'Activo'
+            ORDER BY m.nombre ASC;
+        `;
+        
+        const asistenciaRes = await db.query(asistenciaQuery, [id_reporte, id_lider]);
+
+        // Separamos en el backend para facilitarle el trabajo al Frontend
+        const asistentes = asistenciaRes.rows.filter(p => p.asistio);
+        const ausentes = asistenciaRes.rows.filter(p => !p.asistio);
+
+        return res.status(200).json({
+            reporte: infoRes.rows[0],
+            resumen_asistencia: {
+                total_miembros: asistenciaRes.rows.length,
+                presentes: asistentes.length,
+                ausentes: ausentes.length
+            },
+            asistentes,
+            ausentes
+        });
+
+    } catch (error) {
+        console.error('❌ Error al obtener detalle del reporte:', error);
+        return res.status(500).json({ mensaje: 'Error interno del servidor.' });
+    }
+};
+
+/**
+ * [GET] /api/lider/reportes-historial
+ * Lista todos los reportes pasados del líder.
+ */
+const getHistorialReportes = async (req, res) => {
+    const id_lider = req.user.id;
+    try {
+        const query = `
+            SELECT id_reporte_cdp, fecha_reporte, ofrendas, estado_revision 
+            FROM "ReporteCdP" 
+            WHERE id_lider = $1 
+            ORDER BY fecha_reporte DESC;
+        `;
+        const result = await db.query(query, [id_lider]);
+        res.status(200).json(result.rows);
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener historial.' });
+    }
+};
+
+const getDetalleAsistenciaReporte = async (req, res) => {
+    const { id_reporte } = req.params;
+    const id_lider = req.user.id;
+
+    try {
+        const query = `
+            SELECT 
+                m.id_miembro, 
+                m.nombre, 
+                CASE 
+                    WHEN a.id_miembro IS NOT NULL THEN true 
+                    ELSE false 
+                END as asistio
+            FROM "Miembros" m
+            JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
+            LEFT JOIN "AsistenciaCdP" a ON m.id_miembro = a.id_miembro AND a.id_reporte_cdp = $1
+            WHERE c.id_lider = $2 AND m.estado = 'Activo'
+            ORDER BY m.nombre ASC;
+        `;
+        const result = await db.query(query, [id_reporte, id_lider]);
+        
+        // Separamos para que el front solo renderice dos listas
+        const presentes = result.rows.filter(r => r.asistio);
+        const ausentes = result.rows.filter(r => !r.asistio);
+
+        res.status(200).json({ presentes, ausentes });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener detalle de asistencia.' });
+    }
+};
+
+const getDetalleAsistenciaHistorial = async (req, res) => {
+    const { id_reporte } = req.params;
+    const id_lider = req.user.id;
+
+    try {
+        const query = `
+            SELECT 
+                m.id_miembro, 
+                m.nombre, 
+                CASE WHEN a.id_miembro IS NOT NULL THEN true ELSE false END as asistio
+            FROM "Miembros" m
+            JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
+            LEFT JOIN "AsistenciaCdP" a ON m.id_miembro = a.id_miembro AND a.id_reporte_cdp = $1
+            WHERE c.id_lider = $2 AND m.estado = 'Activo'
+            ORDER BY m.nombre ASC;
+        `;
+        const result = await db.query(query, [id_reporte, id_lider]);
+        
+        const asistentes = result.rows.filter(r => r.asistio);
+        const faltantes = result.rows.filter(r => !r.asistio);
+
+        res.status(200).json({ asistentes, faltantes });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al consultar detalle.' });
+    }
+};
+
+/**
+ * [POST] /api/admin/visita-manual
+ * Permite a administración registrar una visita y asignar responsables de red.
+ */
+const createVisitaAdministrativa = async (req, res) => {
+    const { 
+        nombre, telefono, direccion, referencia, nombre_invitador,
+        asiste_otra_iglesia, nombre_otra_iglesia, tipo, decision,
+        id_lsr_responsable, 
+        id_lider_responsable 
+    } = req.body;
+
+    // Validación básica
+    if (!nombre || !id_lsr_responsable) {
+        return res.status(400).json({ mensaje: 'El nombre de la visita y el LSR responsable son obligatorios.' });
+    }
+
+    // Usamos getClient() de tu db.js
+    const client = await db.getClient(); 
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Insertar la visita (id_reporte_cdp queda en NULL porque no viene de una CdP)
+        const visitaQuery = `
+            INSERT INTO public."VisitasCdP" 
+            (id_reporte_cdp, nombre, telefono, direccion, referencia, nombre_invitador, asiste_otra_iglesia, nombre_otra_iglesia, tipo, decision)
+            VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id_visita;
+        `;
+        const visitaRes = await client.query(visitaQuery, [
+            nombre, telefono, direccion, referencia, nombre_invitador,
+            asiste_otra_iglesia || false, nombre_otra_iglesia, tipo, decision
+        ]);
+        const id_visita = visitaRes.rows[0].id_visita;
+
+        // 2. Crear el seguimiento con los responsables asignados manualmente
+        // Si id_lider_responsable no viene, queda asignado solo al LSR (Rol 4)
+        await client.query(
+            `INSERT INTO public."Seguimiento" (id_visita, estado, id_lsr_responsable, id_lider_responsable) 
+             VALUES ($1, 'Activo', $2, $3)`,
+            [id_visita, id_lsr_responsable, id_lider_responsable || null]
+        );
+
+        await client.query('COMMIT');
+        res.status(201).json({ 
+            mensaje: 'Visita registrada por Administración y seguimiento asignado con éxito.',
+            id_visita: id_visita 
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('❌ Error en registro administrativo:', error);
+        res.status(500).json({ mensaje: 'Error interno al registrar la visita desde administración.' });
+    } finally {
+        // MUY IMPORTANTE: Liberar el cliente para evitar el error de "too many clients"
+        client.release(); 
+    }
+};
+
+/**
+ * [GET] /api/lider/lsr/seguimientos
+ * Obtiene todos los seguimientos pendientes de la subred del LSR logueado.
+ */
+const getSeguimientosLSR = async (req, res) => {
+    const id_lsr = req.user.id;
+
+    try {
+        const query = `
+            SELECT 
+                s.id_seguimiento,
+                s.estado,
+                s.fecha_creacion,
+                v.nombre AS nombre_visita,
+                v.telefono,
+                v.tipo AS tipo_visita,
+                u.nombre AS responsable_lider,
+                c.nombre_lider_cdp AS cdp_origen
+            FROM "Seguimiento" s
+            JOIN "VisitasCdP" v ON s.id_visita = v.id_visita
+            LEFT JOIN "Usuarios" u ON s.id_lider_responsable = u.id_usuario
+            LEFT JOIN "ReporteCdP" r ON v.id_reporte_cdp = r.id_reporte_cdp
+            LEFT JOIN "CasasDePaz" c ON r.id_lider = c.id_lider
+            WHERE s.id_lsr_responsable = $1
+            ORDER BY s.fecha_creacion DESC;
+        `;
+        
+        const result = await db.query(query, [id_lsr]);
+
+        res.status(200).json({
+            mensaje: `Se encontraron ${result.rows.length} seguimientos en su red.`,
+            seguimientos: result.rows
+        });
+    } catch (error) {
+        console.error('❌ Error al obtener seguimientos para LSR:', error);
+        res.status(500).json({ mensaje: 'Error al consultar la bandeja de seguimientos.' });
+    }
+};
+
+/**
+ * [GET] /api/lider/mis-seguimientos
+ * Lista los seguimientos asignados al usuario logueado (Líder o LSR).
+ */
+const getMisSeguimientos = async (req, res) => {
+    const id_usuario = req.user.id;
+    try {
+        const query = `
+            SELECT 
+                s.id_seguimiento, 
+                s.estado, 
+                v.nombre AS nombre_visita, 
+                v.tipo AS tipo_visita
+            FROM public."Seguimiento" s
+            JOIN public."VisitasCdP" v ON s.id_visita = v.id_visita
+            WHERE s.id_lider_responsable = $1 OR s.id_lsr_responsable = $1
+            ORDER BY s.id_seguimiento DESC;
+        `;
+        const result = await db.query(query, [id_usuario]);
+        res.status(200).json(result.rows);
+    } catch (error) {
+        console.error("ERROR EN A:", error); // Esto imprimirá el error real en tu consola
+        res.status(500).json({ mensaje: 'Error al obtener seguimientos.', detalle: error.message });
+    }
+};
+
+/**
+ * [GET] /api/lider/seguimiento-detalle/:id
+ * Obtiene toda la información de la visita y las notas asociadas.
+ */
+
+const getSeguimientoCompleto = async (req, res) => {
+    const { id } = req.params; 
+
+    // Validación de seguridad: Evita que el servidor falle si el ID no es numérico
+    if (!id || isNaN(id)) {
+        return res.status(400).json({ 
+            mensaje: "El ID de seguimiento proporcionado no es válido." 
+        });
+    }
+
+    try {
+        // 1. Obtener datos de la visita y estado del seguimiento
+        const visitaQuery = `
+            SELECT v.*, s.estado AS estado_seguimiento, s.id_seguimiento
+            FROM public."VisitasCdP" v
+            JOIN public."Seguimiento" s ON v.id_visita = s.id_visita
+            WHERE s.id_seguimiento = $1;
+        `;
+        const visita = await db.query(visitaQuery, [id]);
+
+        if (visita.rows.length === 0) {
+            return res.status(404).json({ mensaje: "El seguimiento no existe." });
+        }
+
+        // 2. Obtener el historial de notas con el autor
+        const notasQuery = `
+            SELECT 
+                n.id_nota, n.comentario, n.fecha_creacion,
+                u.nombre AS autor_nombre,
+                r.nombre_rol AS autor_rol
+            FROM public."NotasSeguimiento" n
+            JOIN public."Usuarios" u ON n.id_autor = u.id_usuario
+            JOIN public."Roles" r ON u.id_rol = r.id_rol
+            WHERE n.id_seguimiento = $1
+            ORDER BY n.fecha_creacion DESC;
+        `;
+        const notas = await db.query(notasQuery, [id]);
+
+        res.status(200).json({
+            detalle: visita.rows[0],
+            notas: notas.rows
+        });
+    } catch (error) {
+        console.error("❌ Error en getSeguimientoCompleto:", error.message);
+        res.status(500).json({ mensaje: 'Error interno al obtener el detalle.' });
+    }
+};
+
+/**
+ * [POST] /api/lider/seguimiento-nota
+ * Permite a cualquier rol con acceso agregar una nota al seguimiento.
+ */
+const addNotaSeguimiento = async (req, res) => {
+    const id_autor = req.user.id;
+    const { id_seguimiento, comentario } = req.body;
+
+    if (!comentario) return res.status(400).json({ mensaje: 'El comentario no puede estar vacío.' });
+
+    try {
+        await db.query(
+            'INSERT INTO "NotasSeguimiento" (id_seguimiento, id_autor, comentario) VALUES ($1, $2, $3)',
+            [id_seguimiento, id_autor, comentario]
+        );
+        res.status(201).json({ mensaje: 'Nota agregada con éxito.' });
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al guardar la nota.' });
+    }
+};
+
+
 module.exports = {
+    // Mimebros y Casas de Paz
     getMiembrosByLider,
     getMiembrosByLSR,
     createMiembro,
     updateMiembro,
     deleteMiembro,
-    createReporteCdP,
-    registerAttendance,
     getLiderCdpId,
     getMembersForAttendance,
-    getSubredVisionSummary,
+    // Reportes e Historial
+    createReporteCompleto,
+    getDetalleReporte,
+    getHistorialReportes,
+    getDetalleAsistenciaReporte,
+    getDetalleAsistenciaHistorial,
+    //Seguimientos y notas
+    getSeguimientosLSR,
+    addNotaSeguimiento,
+    getMisSeguimientos,
+    getSeguimientoCompleto,
+    //Analitica
+    getSubredVisionSummary
+
 };
+
 
 
