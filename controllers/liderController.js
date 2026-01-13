@@ -732,10 +732,14 @@ const addNotaSeguimiento = async (req, res) => {
 };
 
 const getMiembrosUniversal = async (req, res) => {
-    const { id: userId, rol } = req.user;
+    // Extraemos los datos del usuario loggeado (puestos por tu middleware de JWT)
+    const { id: userId, rol } = req.user; 
+    
     try {
+        // Tu lógica de normalización que ya funciona
         const rolNormalizado = rol.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
+        // Mantenemos EXACTAMENTE tu misma consulta base
         let query = `
             SELECT 
                 m.id_miembro as id, m.nombre, m.telefono, m.direccion, m.referencia, m.sexo,
@@ -746,14 +750,12 @@ const getMiembrosUniversal = async (req, res) => {
                 m.estado,
                 EXTRACT(YEAR FROM AGE(m.fecha_nacimiento))::int as edad,
                 COALESCE(c.nombre_lider_cdp, 'Sin asignar') as lider,
-                -- Ministerios con nombres reales
                 COALESCE((
                     SELECT json_agg(min.nombre_ministerio)::jsonb
                     FROM "MiembroMinisterio" mm
                     JOIN "Ministerios" min ON mm.id_ministerio = min.id_ministerio
                     WHERE mm.id_miembro = m.id_miembro
                 ), '[]'::jsonb) as ministerios,
-                -- Proceso de la visión ORDENADO por id_fase
                 COALESCE((
                     SELECT json_object_agg(fase_data.n, fase_data.e ORDER BY fase_data.id)::jsonb
                     FROM (
@@ -770,9 +772,20 @@ const getMiembrosUniversal = async (req, res) => {
         `;
 
         const params = [];
+        
+        // --- AQUÍ APLICAMOS LOS FILTROS POR ROL ---
         if (rolNormalizado === 'lider') {
-            query += ` WHERE c.id_lider = $1 OR m.nombre ILIKE '%Roberto%'`;
+            // Caso 1: Líder de Casa de Paz
+            query += ` WHERE c.id_lider = $1`;
             params.push(userId);
+        } 
+        else if (rolNormalizado === 'lider de subred' || rolNormalizado === 'lsr') {
+            // Caso 2: Líder de Subred (ve todas sus casas asignadas)
+            query += ` WHERE c.id_lsr = $1`;
+            params.push(userId);
+        }
+        else if (rolNormalizado === 'administracion' || rolNormalizado === 'administrador') {
+            // Caso 3: Administración (no agregamos WHERE, ve todo)
         }
 
         const result = await db.query(query, params);
