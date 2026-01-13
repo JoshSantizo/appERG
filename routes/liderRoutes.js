@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { verifyToken, authorizeRoles } = require('../middlewares/authMiddleware');
 const liderController = require('../controllers/liderController');
-const ROLES = require('../constants/roles'); 
+const ROLES = require('../constants/roles');
 
 // Roles que tienen permiso para CRUD (Crear, Leer, Modificar, Desactivar)
 const ROLES_CRUD_PERMITIDOS = [
@@ -19,29 +19,14 @@ const ROLES_LIDER = [ROLES.LIDER];
 // RUTAS DE MIEMBROS (Gestión)
 // --------------------------------------------------------------------------
 
-// [GET] /api/lider/miembros - LISTAR MIEMBROS DE SU CDP
-router.get(
-    '/miembros', 
-    verifyToken, 
-    authorizeRoles([ROLES.LIDER]), 
-    liderController.getMiembrosByLider
-);
+// Esta ruta la usan todos: Admins, LSR y Líderes
+router.get('/miembros-universal', verifyToken, authorizeRoles([1, 2, 4, 5]), liderController.getMiembrosUniversal);
 
-// [POST] /api/lider/miembros - CREAR NUEVO MIEMBRO
-router.post(
-    '/miembros',
-    verifyToken,
-    authorizeRoles([ROLES.LIDER]),
-    liderController.createMiembro
-);
+// Solo los roles que pueden crear (Líder, Admin, SuperAdmin)
+// Y usa la función así:
+router.post('/miembros', verifyToken, authorizeRoles([1, 2, 5]), liderController.createMiembro);
 
-// [PUT] /api/lider/miembros/:id - MODIFICAR MIEMBRO
-router.put(
-    '/miembros/:id', 
-    verifyToken, 
-    authorizeRoles(ROLES_CRUD_PERMITIDOS), 
-    liderController.updateMiembro
-);
+
 
 // [DELETE] /api/lider/miembros/:id - ELIMINACIÓN LÓGICA (Cambia estado a 'Inactivo')
 router.delete(
@@ -91,13 +76,7 @@ router.get(
 // ANALÍTICA Y CONSULTAS PARA LSR (ROL 4)
 // --------------------------------------------------------------------------
 
-// [GET] /api/lider/lsr/miembros - Miembros supervisados por LSR
-router.get(
-    '/lsr/miembros', 
-    verifyToken, 
-    authorizeRoles([ROLES.LSR]), 
-    liderController.getMiembrosByLSR
-);
+
 
 // [GET] /api/lider/lsr/vision/resumen - Analítica de visión para LSR
 router.get(
@@ -135,5 +114,6 @@ router.get(
 router.get('/mis-seguimientos', verifyToken, liderController.getMisSeguimientos);
 router.get('/seguimiento-detalle/:id', verifyToken, liderController.getSeguimientoCompleto);
 router.post('/seguimiento-nota', verifyToken, liderController.addNotaSeguimiento);
+router.post('/miembros', liderController.crearMiembroUniversal);
 
 module.exports = router;

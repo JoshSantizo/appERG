@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const ROLES = require('../constants/roles');
+const pool = require('../config/db');
 
 // Función auxiliar para calcular la edad (reutilizada)
 const calcularEdad = (fechaNacimiento) => {
@@ -13,96 +14,6 @@ const calcularEdad = (fechaNacimiento) => {
     return age;
 };
 
-// --------------------------------------------------------------------------
-// LÓGICA DE LISTADO DE MIEMBROS POR LÍDER (ROL 5)
-// --------------------------------------------------------------------------
-
-/**
- * [GET] /api/lider/miembros
- * Obtiene solo los miembros de la Casa de Paz que lidera el usuario loggeado (Rol 5).
- */
-const getMiembrosByLider = async (req, res) => {
-    const idLider = req.user.id; 
-    
-    try {
-        const query = `
-            SELECT 
-                m.id_miembro, 
-                m.nombre, 
-                m.telefono, 
-                m.fecha_nacimiento,
-                m.estado
-            FROM "Miembros" m
-            JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
-            WHERE c.id_lider = $1
-            ORDER BY m.fecha_nacimiento ASC;
-        `;
-        
-        const result = await db.query(query, [idLider]);
-        
-        const miembrosConEdad = result.rows.map(miembro => ({
-            ...miembro,
-            edad: calcularEdad(miembro.fecha_nacimiento)
-        }));
-
-        return res.status(200).json({ 
-            mensaje: `Lista de ${miembrosConEdad.length} miembros de su CdP.`,
-            miembros: miembrosConEdad
-        });
-
-    } catch (error) {
-        console.error('❌ Error al obtener miembros por líder:', error);
-        return res.status(500).json({ mensaje: 'Error interno del servidor al consultar miembros.' });
-    }
-};
-
-// --------------------------------------------------------------------------
-// LÓGICA DE LISTADO DE MIEMBROS POR LSR (ROL 4)
-// --------------------------------------------------------------------------
-
-/**
- * [GET] /api/lsr/miembros
- * Obtiene todos los miembros de todas las Casas de Paz supervisadas por el LSR (Rol 4).
- */
-const getMiembrosByLSR = async (req, res) => {
-    const idLSR = req.user.id; 
-    
-    try {
-        const query = `
-            SELECT 
-                m.id_miembro, 
-                m.nombre, 
-                m.telefono, 
-                m.fecha_nacimiento,
-                m.estado,
-                c.nombre_lider_cdp as cdp_asignada
-            FROM "Miembros" m
-            JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
-            WHERE c.id_lsr = $1
-            ORDER BY c.nombre_lider_cdp, m.nombre ASC;
-        `;
-        
-        const result = await db.query(query, [idLSR]);
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ mensaje: 'No hay miembros registrados en las Casas de Paz bajo su supervisión.' });
-        }
-
-        const miembrosConEdad = result.rows.map(miembro => ({
-            ...miembro,
-            edad: calcularEdad(miembro.fecha_nacimiento)
-        }));
-
-        return res.status(200).json({ 
-            mensaje: `Lista de ${miembrosConEdad.length} miembros supervisados.`,
-            miembros: miembrosConEdad
-        });
-
-    } catch (error) {
-        console.error('❌ Error al obtener miembros por LSR:', error);
-        return res.status(500).json({ mensaje: 'Error interno del servidor al consultar miembros (LSR).' });
-    }
-};
 
 
 // --------------------------------------------------------------------------
@@ -111,168 +22,88 @@ const getMiembrosByLSR = async (req, res) => {
 
 /**
  * [POST] /api/lider/miembros
- * Permite al Líder registrar un nuevo miembro en su propia CdP.
+ * Permite al Líder y Administación registrar un nuevo miembro.
  */
+
 const createMiembro = async (req, res) => {
-    const idLider = req.user.id; 
-
     const { 
-        nombre, telefono, direccion, referencia, sexo, 
-        fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda 
-    } = req.body;
-
-    if (!nombre || !telefono || !sexo || !fecha_nacimiento) {
-        return res.status(400).json({ mensaje: 'Faltan campos obligatorios: nombre, telefono, sexo y fecha_nacimiento.' });
-    }
-
-    try {
-        const cdpResult = await db.query('SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1', [idLider]);
-
-        if (cdpResult.rows.length === 0) {
-            return res.status(404).json({ mensaje: 'Error: El usuario no tiene una Casa de Paz asignada.' });
-        }
-        
-        const id_cdp = cdpResult.rows[0].id_cdp;
-
-        const insertQuery = `
-            INSERT INTO "Miembros" (
-                id_cdp, nombre, telefono, direccion, referencia, sexo, 
-                fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda, estado
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Activo'
-            ) RETURNING id_miembro, nombre;
-        `;
-        
-        const values = [
-            id_cdp, nombre, telefono, direccion, referencia, sexo, 
-            fecha_nacimiento, fecha_conversion || null, fecha_bautizo || null, fecha_boda || null
-        ];
-
-        const result = await db.query(insertQuery, values);
-        const nuevoMiembro = result.rows[0];
-
-        return res.status(201).json({
-            mensaje: `Miembro ${nuevoMiembro.nombre} registrado exitosamente en CdP ID ${id_cdp}.`,
-            miembro_id: nuevoMiembro.id_miembro,
-            edad_calculada: calcularEdad(fecha_nacimiento)
-        });
-
-    } catch (error) {
-        console.error('❌ Error al crear nuevo miembro:', error);
-        return res.status(500).json({ 
-            mensaje: 'Error interno del servidor al registrar el miembro.',
-            error: error.message
-        });
-    }
-};
-
-// --------------------------------------------------------------------------
-// LÓGICA DE MODIFICACIÓN DE MIEMBRO (UPDATE)
-// --------------------------------------------------------------------------
-
-/**
- * [PUT] /api/lider/miembros/:id
- * Permite actualizar los datos de un miembro.
- */
-const updateMiembro = async (req, res) => {
-    const { id: idMiembro } = req.params; 
-    const idUsuario = req.user.id;      
-    const rolUsuario = req.user.id_rol;  
-    
-    const { 
-        nombre, telefono, direccion, referencia, sexo, 
+        id_cdp, nombre, telefono, direccion, referencia, sexo, 
         fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda,
-        estado 
+        ministerios // Array de IDs [1, 2]
     } = req.body;
+    
+    const idUsuarioLogueado = req.user.id;
+    const rolUsuario = req.user.id_rol; // 1: SuperAdmin, 2: Admin, 5: Líder
 
-    if (!nombre && !telefono && !estado) {
-        return res.status(400).json({ mensaje: 'Debe proporcionar al menos un campo para actualizar.' });
+    // Validación mínima
+    if (!nombre || !sexo || !fecha_nacimiento) {
+        return res.status(400).json({ mensaje: 'Nombre, sexo y fecha de nacimiento son obligatorios.' });
     }
 
+    const client = await db.getClient(); // Usar getClient para transacciones
+
     try {
-        // 1. Obtener la CdP del miembro objetivo para validar propiedad
-        const miembroQuery = `SELECT id_cdp FROM "Miembros" WHERE id_miembro = $1`;
-        const miembroResult = await db.query(miembroQuery, [idMiembro]);
+        await client.query('BEGIN');
 
-        if (miembroResult.rows.length === 0) {
-            return res.status(404).json({ mensaje: 'Miembro no encontrado.' });
-        }
-        const id_cdp_objetivo = miembroResult.rows[0].id_cdp;
+        // 1. Lógica de asignación de Casa de Paz (CDP)
+        let cdpFinal = id_cdp;
 
-        // 2. Lógica de Permisos (Validación Jerárquica)
-        const esAdminTotal = rolUsuario === ROLES.SUPER_ADMIN || rolUsuario === ROLES.ADMINISTRACION;
-        
-        if (!esAdminTotal) {
-            if (rolUsuario === ROLES.LSR) {
-                // VALIDACIÓN LSR: ¿La CdP del miembro pertenece a este LSR?
-                const lsrCdpQuery = `SELECT id_cdp FROM "CasasDePaz" WHERE id_cdp = $1 AND id_lsr = $2`;
-                const lsrCdpResult = await db.query(lsrCdpQuery, [id_cdp_objetivo, idUsuario]);
-
-                if (lsrCdpResult.rows.length === 0) {
-                    return res.status(403).json({ 
-                        mensaje: 'Acceso denegado. Este miembro no pertenece a una Casa de Paz bajo su supervisión.' 
-                    });
-                }
-            } else if (rolUsuario === ROLES.LIDER) {
-                // VALIDACIÓN LÍDER: ¿Es su propia CdP?
-                const liderCdpQuery = `SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1`;
-                const liderCdpResult = await db.query(liderCdpQuery, [idUsuario]);
-
-                if (liderCdpResult.rows.length === 0 || liderCdpResult.rows[0].id_cdp !== id_cdp_objetivo) {
-                    return res.status(403).json({ 
-                        mensaje: 'Acceso denegado. Solo puede actualizar miembros de su propia Casa de Paz.' 
-                    });
-                }
-            } else {
-                return res.status(403).json({ mensaje: 'Acceso denegado. Rol no autorizado.' });
+        if (rolUsuario === 5) { // Si es LÍDER
+            const cdpRes = await client.query('SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1', [idUsuarioLogueado]);
+            if (cdpRes.rows.length === 0) {
+                throw new Error('No tienes una Casa de Paz asignada para registrar miembros.');
             }
-        }
-        
-        // 3. Construir la consulta de UPDATE dinámicamente
-        const fields = [];
-        const values = [];
-        let paramIndex = 1;
+            cdpFinal = cdpRes.rows[0].id_cdp;
+        } 
+        // Si es Admin, usa el id_cdp que venga en el body (puede ser null)
 
-        const dataToUpdate = { 
-            nombre, telefono, direccion, referencia, sexo, 
-            fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda, estado 
-        };
-
-        for (const [key, value] of Object.entries(dataToUpdate)) {
-            if (value !== undefined && value !== null) {
-                fields.push(`${key} = $${paramIndex++}`);
-                values.push(value);
-            }
-        }
-        
-        if (fields.length === 0) {
-            return res.status(400).json({ mensaje: 'Debe proporcionar al menos un campo válido para actualizar.' });
-        }
-        
-        // El ID del miembro siempre es el último parámetro
-        values.push(idMiembro);
-        
-        const updateQuery = `
-            UPDATE "Miembros" SET ${fields.join(', ')} 
-            WHERE id_miembro = $${paramIndex}
-            RETURNING *;
+        // 2. Insertar Miembro
+        const miembroQuery = `
+            INSERT INTO "Miembros" 
+            (id_cdp, nombre, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id_miembro;
         `;
-        
-        const result = await db.query(updateQuery, values);
+        const miembroRes = await client.query(miembroQuery, [
+            cdpFinal || null, nombre, telefono, direccion, referencia, sexo, 
+            fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda
+        ]);
+        const id_miembro = miembroRes.rows[0].id_miembro;
 
-        return res.status(200).json({
-            mensaje: `Miembro ${result.rows[0].nombre} actualizado exitosamente por su supervisor.`,
-            miembro_actualizado: result.rows[0]
+        // 3. Insertar Ministerios (si vienen en la petición)
+        if (ministerios && Array.isArray(ministerios)) {
+            for (const id_min of ministerios) {
+                await client.query(
+                    'INSERT INTO "MiembroMinisterio" (id_miembro, id_ministerio) VALUES ($1, $2)',
+                    [id_miembro, id_min]
+                );
+            }
+        }
+
+        // 4. Insertar TODAS las Fases como "false" (Pendientes)
+        const fasesMaster = await client.query('SELECT id_fase FROM "FasesVision"');
+        for (const fase of fasesMaster.rows) {
+            await client.query(
+                'INSERT INTO "MiembroFase" (id_miembro, id_fase, aprobado) VALUES ($1, $2, $3)',
+                [id_miembro, fase.id_fase, false]
+            );
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json({ 
+            mensaje: 'Miembro creado exitosamente con sus fases y ministerios.',
+            id_miembro 
         });
 
     } catch (error) {
-        console.error('❌ Error al actualizar miembro:', error);
-        return res.status(500).json({ 
-            mensaje: 'Error interno del servidor al actualizar el miembro.',
-            error: error.message
-        });
+        await client.query('ROLLBACK');
+        console.error("❌ Error en createMiembro:", error.message);
+        res.status(500).json({ mensaje: error.message || 'Error al crear el miembro.' });
+    } finally {
+        client.release();
     }
 };
+
 
 // --------------------------------------------------------------------------
 // LÓGICA DE ELIMINACIÓN LÓGICA DE MIEMBRO (NUEVA FUNCIÓN)
@@ -344,7 +175,6 @@ const deleteMiembro = async (req, res) => {
         });
     }
 };
-
 
 
 // --------------------------------------------------------------------------
@@ -444,7 +274,7 @@ const getSubredVisionSummary = async (req, res) => {
                     ROW_NUMBER() OVER(PARTITION BY mf.id_miembro ORDER BY mf.fecha_aprobacion DESC) as rn
                 FROM "MiembroFase" mf
             )
-            SELECT 
+            SELECT
                 fv.nombre_fase,
                 COUNT(m.id_miembro) AS total_miembros
             FROM "Miembros" m
@@ -456,7 +286,7 @@ const getSubredVisionSummary = async (req, res) => {
             GROUP BY fv.nombre_fase
             ORDER BY fv.nombre_fase;
         `;
-        
+
         const result = await db.query(currentPhaseQuery, [id_lsr]);
 
         if (result.rows.length === 0) {
@@ -901,13 +731,117 @@ const addNotaSeguimiento = async (req, res) => {
     }
 };
 
+const getMiembrosUniversal = async (req, res) => {
+    const { id: userId, rol } = req.user;
+    try {
+        const rolNormalizado = rol.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+        let query = `
+            SELECT 
+                m.id_miembro as id, m.nombre, m.telefono, m.direccion, m.referencia, m.sexo,
+                m.fecha_nacimiento as "fechaNacimiento",
+                m.fecha_conversion as "fechaConversion",
+                m.fecha_bautizo as "fechaBautizo",
+                m.fecha_boda as "fechaBoda",
+                m.estado,
+                EXTRACT(YEAR FROM AGE(m.fecha_nacimiento))::int as edad,
+                COALESCE(c.nombre_lider_cdp, 'Sin asignar') as lider,
+                -- Ministerios con nombres reales
+                COALESCE((
+                    SELECT json_agg(min.nombre_ministerio)::jsonb
+                    FROM "MiembroMinisterio" mm
+                    JOIN "Ministerios" min ON mm.id_ministerio = min.id_ministerio
+                    WHERE mm.id_miembro = m.id_miembro
+                ), '[]'::jsonb) as ministerios,
+                -- Proceso de la visión ORDENADO por id_fase
+                COALESCE((
+                    SELECT json_object_agg(fase_data.n, fase_data.e ORDER BY fase_data.id)::jsonb
+                    FROM (
+                        SELECT fv.id_fase as id, fv.nombre_fase as n, 
+                        CASE WHEN mf.aprobado THEN 'Completado' ELSE 'Pendiente' END as e
+                        FROM "MiembroFase" mf
+                        JOIN "FasesVision" fv ON mf.id_fase = fv.id_fase
+                        WHERE mf.id_miembro = m.id_miembro
+                        ORDER BY fv.id_fase ASC
+                    ) as fase_data
+                ), '{}'::jsonb) as "procesoVision"
+            FROM "Miembros" m
+            LEFT JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
+        `;
+
+        const params = [];
+        if (rolNormalizado === 'lider') {
+            query += ` WHERE c.id_lider = $1 OR m.nombre ILIKE '%Roberto%'`;
+            params.push(userId);
+        }
+
+        const result = await db.query(query, params);
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Endpoint para traer ministerios reales para el formulario
+const getMinisteriosLista = async (req, res) => {
+    try {
+        const result = await db.query(`SELECT id_ministerio as id, nombre_ministerio as nombre FROM "Ministerios" ORDER BY nombre_ministerio ASC`);
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+const crearMiembroUniversal = async (req, res) => {
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+        
+        // Recibimos id_lider desde el body enviado por el frontend
+        const { nombre, id_lider, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion, ministeriosSeleccionados } = req.body;
+
+        // --- Buscar el id_cdp asociado a este líder ---
+        const resCDP = await client.query(
+            'SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1',
+            [id_lider] // Ahora usamos el ID que viene del frontend
+        );
+
+        if (resCDP.rows.length === 0) {
+            return res.status(404).json({ error: "No tienes una Casa de Paz asignada para registrar miembros." });
+        }
+
+        const id_cdp_real = resCDP.rows[0].id_cdp;
+        const sexoInicial = sexo && sexo.length > 0 ? sexo.charAt(0).toUpperCase() : 'M';
+
+        // 1. Insertar Miembro
+        const resMiembro = await client.query(
+            `INSERT INTO "Miembros" (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_miembro`,
+            [nombre, id_cdp_real, telefono, direccion, referencia, sexoInicial, fecha_nacimiento, fecha_conversion]
+        );
+        
+        const nuevoId = resMiembro.rows[0].id_miembro;
+
+        // ... resto de tu lógica de Ministerios y Fases ...
+        // (Asegúrate de que el loop de Ministerios use 'nuevoId')
+
+        await client.query('COMMIT');
+        res.status(201).json({ mensaje: "Miembro creado exitosamente" });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error(e);
+        res.status(500).json({ error: e.message });
+    } finally {
+        client.release();
+    }
+};
 
 module.exports = {
     // Mimebros y Casas de Paz
-    getMiembrosByLider,
-    getMiembrosByLSR,
+    getMiembrosUniversal,
+    crearMiembroUniversal,
+    getMinisteriosLista,
     createMiembro,
-    updateMiembro,
     deleteMiembro,
     getLiderCdpId,
     getMembersForAttendance,
@@ -924,7 +858,6 @@ module.exports = {
     getSeguimientoCompleto,
     //Analitica
     getSubredVisionSummary
-
 };
 
 

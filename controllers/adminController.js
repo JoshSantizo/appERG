@@ -68,6 +68,68 @@ const getAllMiembros = async (req, res) => {
 };
 
 
+const updateMiembroCompleto = async (req, res) => {
+    const { id: idMiembro } = req.params;
+    const { 
+        nombre, telefono, direccion, referencia, sexo, 
+        fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda,
+        estado, id_cdp,
+        ministerios, // Array de IDs: [1, 2]
+        fases        // Array de objetos: [{id_fase: 1, aprobado: true}, ...]
+    } = req.body;
+
+    const client = await db.getClient();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Actualizar Datos Personales del Miembro
+        const updateMiembroQuery = `
+            UPDATE "Miembros" SET 
+                nombre = $1, telefono = $2, direccion = $3, referencia = $4, 
+                sexo = $5, fecha_nacimiento = $6, fecha_conversion = $7, 
+                fecha_bautizo = $8, fecha_boda = $9, estado = $10, id_cdp = $11
+            WHERE id_miembro = $12
+        `;
+        await client.query(updateMiembroQuery, [
+            nombre, telefono, direccion, referencia, sexo, 
+            fecha_nacimiento, fecha_conversion, fecha_bautizo, 
+            fecha_boda, estado, id_cdp || null, idMiembro
+        ]);
+
+        // 2. Actualizar Ministerios (Borrar actuales y re-insertar los nuevos)
+        if (ministerios && Array.isArray(ministerios)) {
+            await client.query('DELETE FROM "MiembroMinisterio" WHERE id_miembro = $1', [idMiembro]);
+            for (const id_min of ministerios) {
+                await client.query(
+                    'INSERT INTO "MiembroMinisterio" (id_miembro, id_ministerio) VALUES ($1, $2)',
+                    [idMiembro, id_min]
+                );
+            }
+        }
+
+        // 3. Actualizar Fases de la Visión (Selector del Front)
+        if (fases && Array.isArray(fases)) {
+            for (const fase of fases) {
+                await client.query(
+                    'UPDATE "MiembroFase" SET aprobado = $1 WHERE id_miembro = $2 AND id_fase = $3',
+                    [fase.aprobado, idMiembro, fase.id_fase]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        res.status(200).json({ mensaje: 'Información del miembro actualizada íntegramente.' });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("❌ Error en updateMiembroCompleto:", error);
+        res.status(500).json({ mensaje: 'Error al actualizar el perfil completo del miembro.' });
+    } finally {
+        client.release();
+    }
+};
+
 // --------------------------------------------------------------------------
 // LÓGICA DE LISTADO DE CASAS DE PAZ
 // --------------------------------------------------------------------------
@@ -712,164 +774,6 @@ const MIEMBRO_MANAGEMENT_ROLES = [
 ];
 
 
-// --------------------------------------------------------------------------
-// [POST] /api/admin/miembro/crear
-// --------------------------------------------------------------------------
-
-/**
- * [POST] /api/admin/miembro/crear
- * Crea un registro de Miembro en la tabla "Miembros" con todos sus datos personales.
- */
-const createMiembro = async (req, res) => {
-    // Campos requeridos según tu esquema
-    const {
-        nombre,
-        telefono,
-        direccion,
-        referencia,
-        sexo,
-        fecha_nacimiento,
-        fecha_conversion,
-        fecha_bautizo,
-        fecha_boda,
-        estado,
-        id_cdp
-    } = req.body;
-    
-    // 1. Validación de campos obligatorios
-    if (!nombre || !id_cdp || !fecha_nacimiento) {
-        return res.status(400).json({ mensaje: 'Faltan campos obligatorios: nombre, id_cdp, fecha_nacimiento.' });
-    }
-    
-    const cdpId = parseInt(id_cdp);
-    if (isNaN(cdpId)) {
-        return res.status(400).json({ mensaje: 'El ID de la Casa de Paz debe ser un número válido.' });
-    }
-    
-    try {
-        // 2. Verificar si la CdP existe
-        const cdpCheckQuery = `
-            SELECT nombre_lider_cdp 
-            FROM "CasasDePaz" 
-            WHERE id_cdp = $1
-        `;
-        const cdpResult = await db.query(cdpCheckQuery, [cdpId]);
-
-        if (cdpResult.rows.length === 0) {
-            return res.status(404).json({ mensaje: 'ID_CDP inválido: La Casa de Paz especificada no existe.' });
-        }
-        
-        // 3. Inserción directa en la tabla "Miembros"
-        const insertMiembroQuery = `
-            INSERT INTO "Miembros" (
-                id_cdp, nombre, telefono, direccion, referencia, sexo, 
-                fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda, estado
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING id_miembro;
-        `;
-        
-        const values = [
-            cdpId, 
-            nombre, 
-            telefono || null, 
-            direccion || null, 
-            referencia || null, 
-            sexo || null, 
-            fecha_nacimiento, // Obligatorio
-            fecha_conversion || null, 
-            fecha_bautizo || null, 
-            fecha_boda || null, 
-            estado || 'Activo' // Por defecto 'Activo' si no se envía
-        ];
-
-        const result = await db.query(insertMiembroQuery, values);
-        const newMemberId = result.rows[0].id_miembro;
-
-        return res.status(201).json({
-            mensaje: `Miembro '${nombre}' creado y asignado a CdP ${cdpId} exitosamente.`,
-            id_miembro: newMemberId,
-        });
-
-    } catch (error) {
-        console.error('❌ Error al crear Miembro:', error);
-        return res.status(500).json({ 
-            mensaje: 'Error interno del servidor al crear el Miembro.',
-            error: error.message
-        });
-    }
-};
-
-// --------------------------------------------------------------------------
-// [POST] /api/admin/miembro/fase
-// --------------------------------------------------------------------------
-
-/**
- * [POST] /api/admin/miembro/fase
- * Registra o actualiza la fecha de aprobación de un miembro en una fase de la visión.
- * Solo para Administradores y Super Admins.
- */
-const updateMemberPhase = async (req, res) => {
-    const { 
-        id_miembro, 
-        id_fase, 
-        fecha_aprobacion // Opcional: si no se envía, usa la fecha actual
-    } = req.body;
-    
-    const requesterRole = req.user.id_rol;
-
-    // 1. Validación de Rol (Ya está manejada por el middleware, pero la reconfirmamos si es necesario)
-    if (requesterRole !== ROLES.ADMINISTRACION && requesterRole !== ROLES.SUPER_ADMIN) {
-        return res.status(403).json({ mensaje: 'Acceso prohibido. Solo roles de Administración pueden modificar las fases del miembro.' });
-    }
-
-    // 2. Validación de campos
-    if (!id_miembro || !id_fase) {
-        return res.status(400).json({ mensaje: 'ID de Miembro e ID de Fase son obligatorios.' });
-    }
-
-    const memberId = parseInt(id_miembro);
-    const faseId = parseInt(id_fase);
-    const approvedDate = fecha_aprobacion || new Date().toISOString().split('T')[0]; // Usa fecha actual si no se provee
-    
-    try {
-        // Opcional: Verificar que la fase y el miembro existan (no implementado aquí para mantener el foco en el upsert)
-
-        // 3. Inserción/Actualización (UPSERT) en MiembroFase
-        // Usamos ON CONFLICT para manejar si el miembro ya tiene registrada esa fase (solo actualiza la fecha)
-        const query = `
-            INSERT INTO "MiembroFase" (id_miembro, id_fase, fecha_aprobacion)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (id_miembro, id_fase) DO UPDATE
-            SET fecha_aprobacion = EXCLUDED.fecha_aprobacion
-            RETURNING id_miembro, id_fase;
-        `;
-
-        const result = await db.query(query, [memberId, faseId, approvedDate]);
-        
-        return res.status(201).json({
-            mensaje: `Fase ${faseId} (Visión) registrada/actualizada para el Miembro ID ${memberId} con fecha ${approvedDate}.`,
-            id_miembro: result.rows[0].id_miembro,
-            id_fase: result.rows[0].id_fase
-        });
-
-    } catch (error) {
-        // Error de clave foránea, p. ej. si id_miembro o id_fase no existen
-        if (error.code === '23503') { 
-            return res.status(404).json({ mensaje: 'El Miembro o la Fase de Visión especificada no existe.' });
-        }
-        console.error('❌ Error al actualizar la fase del miembro:', error);
-        return res.status(500).json({ 
-            mensaje: 'Error interno del servidor al procesar la fase del miembro.',
-            error: error.message
-        });
-    }
-};
-
-// --------------------------------------------------------------------------
-// [POST] /api/admin/redes
-// --------------------------------------------------------------------------
-
 /**
  * [POST] /api/admin/redes
  * Crea una nueva Red en el sistema. Exclusivo para Super Admin.
@@ -1308,8 +1212,6 @@ module.exports = {
     createCdp,
     updateCdp,
     deleteCdp,
-    createMiembro,
-    updateMemberPhase,
     createRed,
     getAllRedes,
     updateRed,
@@ -1319,7 +1221,8 @@ module.exports = {
     updateVisitaAdmin,
     deleteVisitaAdmin,
     getAllSeguimientosAdmin,
-    resetPasswordByAdmin
+    resetPasswordByAdmin,
+    updateMiembroCompleto
 };
 
 

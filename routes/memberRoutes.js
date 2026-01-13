@@ -38,13 +38,7 @@ router.get(
     memberController.getMemberById
 );
 
-// [PUT] /api/miembros/:id_miembro - Actualiza un miembro (Actualización)
-router.put(
-    '/:id_miembro', 
-    verifyToken, 
-    authorizeRoles(MEMBER_MANAGEMENT_ROLES), 
-    memberController.updateMember
-);
+
 
 // [DELETE] /api/miembros/:id_miembro - Elimina un miembro (Solo Admin/Super Admin)
 router.delete(

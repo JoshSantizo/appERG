@@ -12,13 +12,6 @@ const LSR_ACCESS_ROLES = [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.LSR];
 // Usamos el controlador del archivo 'liderController.js'
 router.get('/vision/resumen', verifyToken, authorizeRoles(LSR_ACCESS_ROLES), liderController.getSubredVisionSummary);
 
-// [GET] /api/lsr/miembros
-// Requiere token y solo accesible por el Líder de Subred (Rol 4)
-router.get(
-    '/miembros',
-    verifyToken,
-    authorizeRoles([ROLES.LSR]), // Usamos el ID oficial del LSR (4)
-    liderController.getMiembrosByLSR
-);
+
 
 module.exports = router;

@@ -32,6 +32,9 @@ router.post('/redes', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminContro
 router.get('/redes', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.getAllRedes);
 router.put('/redes/:id_red', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.updateRed);
 
+// Ruta unificada para edición total por el Admin
+router.put('/miembros-completo/:id', verifyToken, authorizeRoles([1, 2]), adminController.updateMiembroCompleto);
+
 
 // --------------------------------------------------------------------------
 // 1. RUTAS DE REPORTES (Se mantienen iguales)
@@ -182,21 +185,7 @@ const MIEMBRO_MANAGEMENT_ROLES = [ROLES.SUPER_ADMIN, ROLES.ADMINISTRACION, ROLES
 // 4. GESTIÓN DE MIEMBROS
 // --------------------------------------------------------------------------
 
-// [POST] /api/admin/miembro/crear - Crea un nuevo Miembro (Ya implementado en adminController)
-router.post(
-    '/miembro/crear', 
-    verifyToken, 
-    authorizeRoles(MIEMBRO_MANAGEMENT_ROLES), 
-    adminController.createMiembro
-);
 
-// [PUT] /api/admin/miembro/:id_miembro - Actualiza un Miembro (Reutilizando MemberController)
-router.put(
-    '/miembro/:id_miembro', 
-    verifyToken, 
-    authorizeRoles(MIEMBRO_MANAGEMENT_ROLES), // Permitimos a Líderes de Subred (LSR) editar
-    memberController.updateMember // <--- Función reutilizada
-);
 
 // [DELETE] /api/admin/miembro/:id_miembro - Elimina un Miembro (Reutilizando MemberController)
 router.delete(
@@ -210,13 +199,7 @@ router.delete(
 // 5. GESTIÓN DE FASES DE VISIÓN
 // --------------------------------------------------------------------------
 
-// [POST] /api/admin/miembro/fase - Registra/Actualiza el progreso de un miembro en una fase
-router.post(
-    '/miembro/fase',
-    verifyToken,
-    authorizeRoles(PHASE_UPDATE_ROLES),
-    adminController.updateMemberPhase
-);
+
 
 // --- GESTIÓN DE LSRS (ROLES 4) ---
 router.post('/lsr/rol', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.manageLsrRole);

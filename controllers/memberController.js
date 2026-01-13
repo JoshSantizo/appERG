@@ -400,7 +400,7 @@ const deleteMember = async (req, res) => {
     } catch (error) {
         // Si la eliminación falla por una llave foránea (ej. 23503)
         if (error.code === '23503') {
-             return res.status(409).json({ 
+            return res.status(409).json({ 
                 mensaje: 'Conflicto: No se puede eliminar el miembro porque tiene registros de asistencia asociados.',
                 solucion: 'Cambie el estado del miembro a "Inactivo" en su lugar, o contacte al administrador para eliminar los registros dependientes.'
             });
@@ -412,7 +412,6 @@ const deleteMember = async (req, res) => {
         });
     }
 };
-
 
 module.exports = {
     createMember,
