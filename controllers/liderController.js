@@ -806,45 +806,90 @@ const getMinisteriosLista = async (req, res) => {
 };
 
 const crearMiembroUniversal = async (req, res) => {
+    // Obtenemos el cliente desde el Pool (tu método getClient)
     const client = await db.getClient();
+    
     try {
+        // INICIO DE LA TRANSACCIÓN
+        // Si algo falla después de este punto, nada se guarda en ninguna tabla
         await client.query('BEGIN');
-        
-        // Recibimos id_lider desde el body enviado por el frontend
-        const { nombre, id_lider, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion, ministeriosSeleccionados } = req.body;
 
-        // --- Buscar el id_cdp asociado a este líder ---
+        const { 
+            nombre, 
+            id_lider, // Recibido desde el frontend (ID del usuario loggeado)
+            telefono, 
+            direccion, 
+            referencia, 
+            sexo, 
+            fecha_nacimiento, 
+            fecha_conversion, 
+            ministeriosSeleccionados 
+        } = req.body;
+
+        // 1. BUSCAR LA CASA DE PAZ (CDP) ASOCIADA AL LÍDER
+        // No usamos el ID del líder como ID de CDP, buscamos la relación real
         const resCDP = await client.query(
             'SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1',
-            [id_lider] // Ahora usamos el ID que viene del frontend
+            [id_lider]
         );
 
         if (resCDP.rows.length === 0) {
-            return res.status(404).json({ error: "No tienes una Casa de Paz asignada para registrar miembros." });
+            throw new Error("El líder no tiene una Casa de Paz asignada.");
         }
 
         const id_cdp_real = resCDP.rows[0].id_cdp;
-        const sexoInicial = sexo && sexo.length > 0 ? sexo.charAt(0).toUpperCase() : 'M';
 
-        // 1. Insertar Miembro
+        // Normalizar el sexo para que quepa en character(1)
+        const sexoInicial = sexo ? sexo.charAt(0).toUpperCase() : 'M';
+
+        // 2. INSERTAR EN LA TABLA "Miembros"
         const resMiembro = await client.query(
-            `INSERT INTO "Miembros" (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion) 
+            `INSERT INTO "Miembros" 
+            (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_miembro`,
             [nombre, id_cdp_real, telefono, direccion, referencia, sexoInicial, fecha_nacimiento, fecha_conversion]
         );
         
-        const nuevoId = resMiembro.rows[0].id_miembro;
+        const nuevoIdMiembro = resMiembro.rows[0].id_miembro;
 
-        // ... resto de tu lógica de Ministerios y Fases ...
-        // (Asegúrate de que el loop de Ministerios use 'nuevoId')
+        // 3. ASIGNAR MINISTERIOS (Si el usuario seleccionó alguno)
+        if (ministeriosSeleccionados && ministeriosSeleccionados.length > 0) {
+            for (const id_min of ministeriosSeleccionados) {
+                await client.query(
+                    `INSERT INTO "MiembroMinisterio" (id_miembro, id_ministerio) VALUES ($1, $2)`,
+                    [nuevoIdMiembro, id_min]
+                );
+            }
+        }
 
+        // 4. INICIALIZAR FASES DE LA VISIÓN
+        // Buscamos todas las fases que existen en la iglesia
+        const fasesExistentes = await client.query(`SELECT id_fase FROM "FasesVision" ORDER BY id_fase ASC`);
+        
+        // Las insertamos todas para el nuevo miembro, marcadas como 'false' (Pendiente)
+        for (const f of fasesExistentes.rows) {
+            await client.query(
+                `INSERT INTO "MiembroFase" (id_miembro, id_fase, aprobado) VALUES ($1, $2, false)`,
+                [nuevoIdMiembro, f.id_fase]
+            );
+        }
+
+        // SI TODO SALIÓ BIEN, CONFIRMAMOS LOS CAMBIOS
         await client.query('COMMIT');
-        res.status(201).json({ mensaje: "Miembro creado exitosamente" });
+        
+        res.status(201).json({ 
+            mensaje: "Miembro creado, ministerios asignados y fases de visión inicializadas correctamente.",
+            id: nuevoIdMiembro 
+        });
+
     } catch (e) {
+        // SI HUBO ERROR, DESHACEMOS TODO (Rollback)
+        // No quedarán miembros a medias sin fases o sin casa
         await client.query('ROLLBACK');
-        console.error(e);
+        console.error("Error en crearMiembroUniversal:", e.message);
         res.status(500).json({ error: e.message });
     } finally {
+        // Liberamos el cliente para que el Pool pueda reusarlo
         client.release();
     }
 };
