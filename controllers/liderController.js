@@ -822,7 +822,9 @@ const crearMiembroUniversal = async (req, res) => {
             referencia, 
             sexo, 
             fecha_nacimiento, 
-            fecha_conversion, 
+            fecha_conversion,
+            fecha_bautizo,
+            fecha_boda, 
             ministeriosSeleccionados 
         } = req.body;
 
@@ -845,9 +847,9 @@ const crearMiembroUniversal = async (req, res) => {
         // 2. INSERTAR EN LA TABLA "Miembros"
         const resMiembro = await client.query(
             `INSERT INTO "Miembros" 
-            (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id_miembro`,
-            [nombre, id_cdp_real, telefono, direccion, referencia, sexoInicial, fecha_nacimiento, fecha_conversion]
+            (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_miembro`,
+            [nombre, id_cdp_real, telefono, direccion, referencia, sexoInicial, fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda]
         );
         
         const nuevoIdMiembro = resMiembro.rows[0].id_miembro;
