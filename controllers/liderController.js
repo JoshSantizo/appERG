@@ -741,36 +741,39 @@ const getMiembrosUniversal = async (req, res) => {
 
         // Mantenemos EXACTAMENTE tu misma consulta base
         let query = `
-            SELECT 
-                m.id_miembro as id, m.nombre, m.telefono, m.direccion, m.referencia, m.sexo,
-                m.fecha_nacimiento as "fechaNacimiento",
-                m.fecha_conversion as "fechaConversion",
-                m.fecha_bautizo as "fechaBautizo",
-                m.fecha_boda as "fechaBoda",
-                m.estado,
-                EXTRACT(YEAR FROM AGE(m.fecha_nacimiento))::int as edad,
-                COALESCE(c.nombre_lider_cdp, 'Sin asignar') as lider,
-                COALESCE((
-                    SELECT json_agg(min.nombre_ministerio)::jsonb
-                    FROM "MiembroMinisterio" mm
-                    JOIN "Ministerios" min ON mm.id_ministerio = min.id_ministerio
-                    WHERE mm.id_miembro = m.id_miembro
-                ), '[]'::jsonb) as ministerios,
-                COALESCE((
-                    SELECT json_object_agg(fase_data.n, fase_data.e ORDER BY fase_data.id)::jsonb
-                    FROM (
-                        SELECT fv.id_fase as id, fv.nombre_fase as n, 
-                        CASE WHEN mf.aprobado THEN 'Completado' ELSE 'Pendiente' END as e
-                        FROM "MiembroFase" mf
-                        JOIN "FasesVision" fv ON mf.id_fase = fv.id_fase
-                        WHERE mf.id_miembro = m.id_miembro
-                        ORDER BY fv.id_fase ASC
-                    ) as fase_data
-                ), '{}'::jsonb) as "procesoVision"
-            FROM "Miembros" m
-            LEFT JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
-        `;
-
+    SELECT 
+        m.id_miembro as id, m.nombre, m.telefono, m.direccion, m.referencia, m.sexo,
+        m.fecha_nacimiento as "fechaNacimiento",
+        m.fecha_conversion as "fechaConversion",
+        m.fecha_bautizo as "fechaBautizo",
+        m.fecha_boda as "fechaBoda",
+        m.estado,
+        m.id_cdp, 
+        EXTRACT(YEAR FROM AGE(m.fecha_nacimiento))::int as edad,
+        COALESCE(u_lider.nombre, 'Sin asignar') as lider,
+        COALESCE(u_lsr.nombre, 'Sin asignar') as "liderSubred", -- Ajustado para coincidir con la interfaz del Front
+        COALESCE((
+            SELECT json_agg(min.nombre_ministerio)::jsonb
+            FROM "MiembroMinisterio" mm
+            JOIN "Ministerios" min ON mm.id_ministerio = min.id_ministerio
+            WHERE mm.id_miembro = m.id_miembro
+        ), '[]'::jsonb) as ministerios,
+        COALESCE((
+            SELECT json_object_agg(fase_data.n, fase_data.e ORDER BY fase_data.id)::jsonb
+            FROM (
+                SELECT fv.id_fase as id, fv.nombre_fase as n, 
+                CASE WHEN mf.aprobado THEN 'Completado' ELSE 'Pendiente' END as e
+                FROM "MiembroFase" mf
+                JOIN "FasesVision" fv ON mf.id_fase = fv.id_fase
+                WHERE mf.id_miembro = m.id_miembro
+                ORDER BY fv.id_fase ASC
+            ) as fase_data
+        ), '{}'::jsonb) as "procesoVision"
+    FROM "Miembros" m
+    LEFT JOIN "CasasDePaz" c ON m.id_cdp = c.id_cdp
+    LEFT JOIN "Usuarios" u_lider ON c.id_lider = u_lider.id_usuario 
+    LEFT JOIN "Usuarios" u_lsr ON c.id_lsr = u_lsr.id_usuario 
+`;
         const params = [];
         
         // --- AQUÍ APLICAMOS LOS FILTROS POR ROL ---
@@ -829,27 +832,42 @@ const crearMiembroUniversal = async (req, res) => {
         } = req.body;
 
         // 1. BUSCAR LA CASA DE PAZ (CDP) ASOCIADA AL LÍDER
-        // No usamos el ID del líder como ID de CDP, buscamos la relación real
-        const resCDP = await client.query(
-            'SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1',
-            [id_lider]
-        );
+        let id_cdp_real = null;
 
-        if (resCDP.rows.length === 0) {
-            throw new Error("El líder no tiene una Casa de Paz asignada.");
+        if (id_lider && id_lider !== "none") {
+            const resCDP = await client.query(
+                'SELECT id_cdp FROM "CasasDePaz" WHERE id_lider = $1',
+                [id_lider]
+            );
+
+            // Si el líder tiene CDP, asignamos el ID real. 
+            // Si no tiene (como en el caso de Admin creando miembros sueltos), se queda como null.
+            if (resCDP.rows.length > 0) {
+                id_cdp_real = resCDP.rows[0].id_cdp;
+            }
         }
-
-        const id_cdp_real = resCDP.rows[0].id_cdp;
 
         // Normalizar el sexo para que quepa en character(1)
         const sexoInicial = sexo ? sexo.charAt(0).toUpperCase() : 'M';
 
         // 2. INSERTAR EN LA TABLA "Miembros"
+        // id_cdp_real puede ser un ID o NULL, permitiendo la creación sin casa de paz
         const resMiembro = await client.query(
             `INSERT INTO "Miembros" 
-            (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_miembro`,
-            [nombre, id_cdp_real, telefono, direccion, referencia, sexoInicial, fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda]
+            (nombre, id_cdp, telefono, direccion, referencia, sexo, fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda, estado) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Activo') RETURNING id_miembro`,
+            [
+                nombre, 
+                id_cdp_real, 
+                telefono, 
+                direccion, 
+                referencia, 
+                sexoInicial, 
+                fecha_nacimiento, 
+                fecha_conversion || null, 
+                fecha_bautizo || null, 
+                fecha_boda || null
+            ]
         );
         
         const nuevoIdMiembro = resMiembro.rows[0].id_miembro;
@@ -886,7 +904,6 @@ const crearMiembroUniversal = async (req, res) => {
 
     } catch (e) {
         // SI HUBO ERROR, DESHACEMOS TODO (Rollback)
-        // No quedarán miembros a medias sin fases o sin casa
         await client.query('ROLLBACK');
         console.error("Error en crearMiembroUniversal:", e.message);
         res.status(500).json({ error: e.message });

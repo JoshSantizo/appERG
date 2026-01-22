@@ -72,10 +72,10 @@ const updateMiembroCompleto = async (req, res) => {
     const { id: idMiembro } = req.params;
     const { 
         nombre, telefono, direccion, referencia, sexo, 
-        fecha_nacimiento, fecha_conversion, fecha_bautizo, fecha_boda,
+        fechaNacimiento, fechaConversion, fechaBautizo, fechaBoda,
         estado, id_cdp,
         ministerios, // Array de IDs: [1, 2]
-        fases        // Array de objetos: [{id_fase: 1, aprobado: true}, ...]
+        procesoVision // Objeto del front: { "Lanzamiento": "Completado", ... }
     } = req.body;
 
     const client = await db.getClient();
@@ -83,7 +83,11 @@ const updateMiembroCompleto = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Actualizar Datos Personales del Miembro
+        // 1. Normalizar datos: Sexo a 'M'/'F' y CDP a NULL si es "none"
+        const sexoDB = sexo === "Masculino" || sexo === "M" ? 'M' : 'F';
+        const cdpFinal = (id_cdp === "none" || !id_cdp) ? null : id_cdp;
+
+        // 2. Actualizar Datos Personales
         const updateMiembroQuery = `
             UPDATE "Miembros" SET 
                 nombre = $1, telefono = $2, direccion = $3, referencia = $4, 
@@ -92,39 +96,42 @@ const updateMiembroCompleto = async (req, res) => {
             WHERE id_miembro = $12
         `;
         await client.query(updateMiembroQuery, [
-            nombre, telefono, direccion, referencia, sexo, 
-            fecha_nacimiento, fecha_conversion, fecha_bautizo, 
-            fecha_boda, estado, id_cdp || null, idMiembro
+            nombre, telefono, direccion, referencia, sexoDB, 
+            fechaNacimiento, fechaConversion || null, fechaBautizo || null, 
+            fechaBoda || null, estado, cdpFinal, idMiembro
         ]);
 
-        // 2. Actualizar Ministerios (Borrar actuales y re-insertar los nuevos)
+        // 3. Actualizar Ministerios (Borrar y Reinsertar)
         if (ministerios && Array.isArray(ministerios)) {
             await client.query('DELETE FROM "MiembroMinisterio" WHERE id_miembro = $1', [idMiembro]);
             for (const id_min of ministerios) {
                 await client.query(
                     'INSERT INTO "MiembroMinisterio" (id_miembro, id_ministerio) VALUES ($1, $2)',
-                    [idMiembro, id_min]
+                    [idMiembro, parseInt(id_min)]
                 );
             }
         }
 
-        // 3. Actualizar Fases de la Visión (Selector del Front)
-        if (fases && Array.isArray(fases)) {
-            for (const fase of fases) {
+        // 4. Actualizar Fases de la Visión
+        // Convertimos el objeto {"Fase": "Completado"} a updates en la BD
+        if (procesoVision && typeof procesoVision === 'object') {
+            for (const [nombreFase, estadoFase] of Object.entries(procesoVision)) {
+                const aprobado = estadoFase === "Completado";
                 await client.query(
-                    'UPDATE "MiembroFase" SET aprobado = $1 WHERE id_miembro = $2 AND id_fase = $3',
-                    [fase.aprobado, idMiembro, fase.id_fase]
+                    `UPDATE "MiembroFase" SET aprobado = $1 
+                     WHERE id_miembro = $2 AND id_fase = (SELECT id_fase FROM "FasesVision" WHERE nombre_fase = $3)`,
+                    [aprobado, idMiembro, nombreFase]
                 );
             }
         }
 
         await client.query('COMMIT');
-        res.status(200).json({ mensaje: 'Información del miembro actualizada íntegramente.' });
+        res.status(200).json({ mensaje: 'Información actualizada con éxito.' });
 
     } catch (error) {
         await client.query('ROLLBACK');
         console.error("❌ Error en updateMiembroCompleto:", error);
-        res.status(500).json({ mensaje: 'Error al actualizar el perfil completo del miembro.' });
+        res.status(500).json({ mensaje: 'Error al actualizar el perfil.' });
     } finally {
         client.release();
     }
@@ -1201,9 +1208,40 @@ const resetPasswordByAdmin = async (req, res) => {
     }
 };
 
+const deleteMiembroFisico = async (req, res) => {
+    const { id } = req.params;
+    const client = await db.getClient();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Borrar de tablas dependientes (Hijos)
+        await client.query('DELETE FROM "AsistenciaCdP" WHERE id_miembro = $1', [id]);
+        await client.query('DELETE FROM "MiembroMinisterio" WHERE id_miembro = $1', [id]);
+        await client.query('DELETE FROM "MiembroFase" WHERE id_miembro = $1', [id]);
+
+        // 2. Borrar de la tabla principal (Padre)
+        const result = await client.query('DELETE FROM "Miembros" WHERE id_miembro = $1', [id]);
+
+        if (result.rowCount === 0) {
+            throw new Error("El miembro no existe.");
+        }
+
+        await client.query('COMMIT');
+        res.status(200).json({ mensaje: 'Miembro eliminado permanentemente de la base de datos.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("❌ Error en deleteMiembroFisico:", error);
+        res.status(500).json({ error: 'No se pudo eliminar el miembro.' });
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     getAllMiembros,
     getAllCasasDePaz,
+    deleteMiembroFisico,
     assignLiderToCdP,
     createCdP,
     createNetwork,

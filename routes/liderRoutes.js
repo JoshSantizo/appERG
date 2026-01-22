@@ -35,6 +35,8 @@ router.delete(
     authorizeRoles(ROLES_CRUD_PERMITIDOS), 
     liderController.deleteMiembro
 );
+// Asegúrate de que esta línea esté presente y use la función correcta
+router.post('/miembros', verifyToken, authorizeRoles([1, 2, 5]), liderController.crearMiembroUniversal);
 
 // --------------------------------------------------------------------------
 // GESTIÓN DE REPORTES

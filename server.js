@@ -25,6 +25,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // --- 3. IMPORTACIÓN DE RUTAS ---
 const authRoutes = require('./routes/authRoutes');
+const catalogosRoutes = require('./routes/catalogosRoutes');
 const liderRoutes = require('./routes/liderRoutes');
 const lsrRoutes = require('./routes/lsrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -32,6 +33,7 @@ const reportingRoutes = require('./routes/reportingRoutes');
 const memberRoutes = require('./routes/memberRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const { crearMiembroUniversal } = require('./controllers/liderController');
+
 
 // --- 4. DEFINICIÓN DE RUTAS ---
 
@@ -47,6 +49,7 @@ app.use('/api/miembros', memberRoutes); // Nota: Si memberRoutes tiene un GET '/
 app.use('/api/reportes', reportRoutes);
 app.post('/api/miembros', crearMiembroUniversal);
 app.use('/api', liderRoutes);
+app.use('/api', catalogosRoutes);
 
 // Ruta de prueba
 app.get('/', (req, res) => {

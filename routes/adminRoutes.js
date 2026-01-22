@@ -27,13 +27,19 @@ const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.ADMINISTRACION];
 // Roles permitidos para gestión administrativa de alto nivel (Solo Super Admin)
 const SUPER_ADMIN_ROLE = [ROLES.SUPER_ADMIN]; // Rol 1
 
+// Actualización
+router.put('/miembros/:id', verifyToken, authorizeRoles([1, 2, 4, 5]), adminController.updateMiembroCompleto);
+
+// Eliminación Física (Solo Admin/SuperAdmin)
+router.delete('/miembros-fisico/:id', verifyToken, authorizeRoles([1, 2, 4]), adminController.deleteMiembroFisico);
+
 // --- GESTIÓN DE REDES ---
 router.post('/redes', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.createRed);
 router.get('/redes', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.getAllRedes);
 router.put('/redes/:id_red', verifyToken, authorizeRoles(SUPER_ADMIN_ROLE), adminController.updateRed);
 
 // Ruta unificada para edición total por el Admin
-router.put('/miembros-completo/:id', verifyToken, authorizeRoles([1, 2]), adminController.updateMiembroCompleto);
+router.put('/miembros-completo/:id', verifyToken, authorizeRoles([1, 2, 4, 5]), adminController.updateMiembroCompleto);
 
 
 // --------------------------------------------------------------------------

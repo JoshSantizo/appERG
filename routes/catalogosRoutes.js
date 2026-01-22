@@ -6,3 +6,5 @@ const { verifyToken } = require('../middlewares/authMiddleware');
 
 // Para llenar los Selectores del Front
 router.get('/catalogos/filtros', verifyToken, catalogosController.getCatalogosFiltros);
+
+module.exports = router;
