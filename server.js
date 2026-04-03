@@ -37,8 +37,9 @@ const { crearMiembroUniversal } = require('./controllers/liderController');
 
 // --- 4. DEFINICIÓN DE RUTAS ---
 app.use('/test-envio', reportRoutes);
+app.use('/reportes', reportRoutes);
 
-// Esta es la ruta universal que definimos para Daniela y todos los roles
+// Esta es la ruta universal que definimos
 app.use('/api/ministerios',verifyToken,liderController.getMinisteriosLista)
 app.use('/api/miembros-universal', verifyToken, liderController.getMiembrosUniversal);
 app.use('/api/auth', authRoutes);
