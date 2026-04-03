@@ -117,5 +117,7 @@ router.get('/mis-seguimientos', verifyToken, liderController.getMisSeguimientos)
 router.get('/seguimiento-detalle/:id', verifyToken, liderController.getSeguimientoCompleto);
 router.post('/seguimiento-nota', verifyToken, liderController.addNotaSeguimiento);
 router.post('/miembros', liderController.crearMiembroUniversal);
+// Dentro de routes/liderRoutes.js
+router.post('/reporte-completo', verifyToken, liderController.createReporteCompleto);
 
 module.exports = router;

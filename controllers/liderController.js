@@ -322,80 +322,46 @@ const getSubredVisionSummary = async (req, res) => {
  */
 
 const createReporteCompleto = async (req, res) => {
-    const id_lider = req.user.id;
-    const { 
-        fecha_reporte, latitud, longitud, ofrendas, diezmos, pactos, primicias, 
-        metodo_entrega_ofrenda, comentarios, asistencia, visitas 
-    } = req.body;
-
-    // USAMOS getClient() que es como lo tienes en db.js
-    const client = await db.getClient(); 
-
+    console.log("!!! LLEGAMOS AL CONTROLADOR CORRECTAMENTE !!!");
+    const client = await pool.connect();
     try {
+        const { id_lider, ofrendas, diezmos, pactos, primicias, comentarios, metodo_entrega_ofrenda, visitas, asistencia } = req.body;
         await client.query('BEGIN');
 
-        // 0. Obtener el LSR del líder para la jerarquía
-        const redQuery = 'SELECT id_lsr FROM "CasasDePaz" WHERE id_lider = $1';
-        const redRes = await client.query(redQuery, [id_lider]);
-        const id_lsr = redRes.rows[0]?.id_lsr;
+        const reporteRes = await client.query(
+            `INSERT INTO "ReporteCdP" (id_lider, ofrendas, diezmos, pactos, primicias, comentarios, metodo_entrega_ofrenda, fecha_reporte)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE) RETURNING id_reporte_cdp`,
+            [id_lider, ofrendas || 0, diezmos || 0, pactos || 0, primicias || 0, comentarios, metodo_entrega_ofrenda]
+        );
+        const id_reporte = reporteRes.rows[0].id_reporte_cdp;
 
-        // 1. Insertar Cabecera
-        const reportQuery = `
-            INSERT INTO public."ReporteCdP" 
-            (id_lider, fecha_reporte, latitud, longitud, ofrendas, diezmos, pactos, primicias, metodo_entrega_ofrenda, comentarios)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_reporte_cdp;
-        `;
-        const reportRes = await client.query(reportQuery, [
-            id_lider, fecha_reporte, latitud, longitud, 
-            ofrendas || 0, diezmos || 0, pactos || 0, primicias || 0, 
-            metodo_entrega_ofrenda || 'En el servicio', comentarios
-        ]);
-        const id_reporte = reportRes.rows[0].id_reporte_cdp;
-
-        // 2. Insertar Asistencia
-        if (asistencia && asistencia.length > 0) {
-            for (const persona of asistencia) {
-                if (persona.asistio) {
-                    await client.query(
-                        'INSERT INTO public."AsistenciaCdP" (id_reporte_cdp, id_miembro, asistio) VALUES ($1, $2, TRUE)',
-                        [id_reporte, persona.id_miembro]
-                    );
-                }
+        if (visitas && visitas.length > 0) {
+            for (const v of visitas) {
+                await client.query(
+                    `INSERT INTO "VisitasCdP" (id_reporte_cdp, nombre, telefono, direccion, referencia, nombre_invitador, asiste_otra_iglesia, nombre_otra_iglesia, tipo, decision)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                    [id_reporte, v.nombre, v.telefono, v.direccion, v.referencia, v.nombre_invitador, v.asiste_otra_iglesia, v.nombre_otra_iglesia, v.tipo, v.decision]
+                );
             }
         }
 
-        // 3. Insertar Visitas y Seguimiento
-        if (visitas && visitas.length > 0) {
-            for (const v of visitas) {
-                const visitaQuery = `
-                    INSERT INTO public."VisitasCdP" 
-                    (id_reporte_cdp, nombre, telefono, direccion, referencia, nombre_invitador, asiste_otra_iglesia, nombre_otra_iglesia, tipo, decision)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id_visita;
-                `;
-                const visitaRes = await client.query(visitaQuery, [
-                    id_reporte, v.nombre, v.telefono, v.direccion, v.referencia, v.nombre_invitador, 
-                    v.asiste_otra_iglesia || false, v.nombre_otra_iglesia, v.tipo, v.decision
-                ]);
-
-                const id_visita = visitaRes.rows[0].id_visita;
-
+        if (asistencia && asistencia.length > 0) {
+            for (const a of asistencia) {
                 await client.query(
-                    `INSERT INTO public."Seguimiento" (id_visita, estado, id_lsr_responsable, id_lider_responsable) 
-                     VALUES ($1, 'Activo', $2, $3)`,
-                    [id_visita, id_lsr, id_lider]
+                    `INSERT INTO "AsistenciaCdP" (id_reporte_cdp, id_miembro, asistio) VALUES ($1, $2, $3)`,
+                    [id_reporte, a.id_miembro, a.asistio]
                 );
             }
         }
 
         await client.query('COMMIT');
-        res.status(201).json({ mensaje: 'Reporte y seguimientos creados con éxito', id_reporte_cdp: id_reporte });
-
+        res.status(201).json({ mensaje: "Reporte guardado con éxito", id: id_reporte });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('❌ Error:', error);
-        res.status(500).json({ mensaje: 'Error al procesar reporte completo' });
+        console.error("ERROR REAL:", error.message); // <--- ESTO SALDRÁ EN CONSOLA
+        res.status(500).json({ mensaje: "Error al procesar reporte completo", error: error.message });
     } finally {
-        client.release(); // LIBERAR EL CLIENTE SIEMPRE
+        client.release();
     }
 };
 
@@ -914,6 +880,7 @@ const crearMiembroUniversal = async (req, res) => {
 };
 
 module.exports = {
+    createReporteCompleto,
     // Mimebros y Casas de Paz
     getMiembrosUniversal,
     crearMiembroUniversal,
@@ -923,7 +890,6 @@ module.exports = {
     getLiderCdpId,
     getMembersForAttendance,
     // Reportes e Historial
-    createReporteCompleto,
     getDetalleReporte,
     getHistorialReportes,
     getDetalleAsistenciaReporte,
