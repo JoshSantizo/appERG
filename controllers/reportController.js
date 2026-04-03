@@ -12,10 +12,7 @@ const REPORTER_ROLES = [
 const pool = require('../config/db');
 
 const createReporteCompleto = async (req, res) => {
-    console.log("========================================");
-    console.log("!!! NUEVA RUTA DE REPORTE DETECTADA !!!");
-    console.log("========================================");
-    
+    console.log(">>> Solicitud recibida en createReporteCompleto");
     const client = await pool.connect();
     
     try {
@@ -37,7 +34,7 @@ const createReporteCompleto = async (req, res) => {
 
         const id_reporte = reporteRes.rows[0].id_reporte_cdp;
 
-        // 2. Insertar Visitas
+        // 2. Insertar Visitas (si existen)
         if (visitas && visitas.length > 0) {
             for (const v of visitas) {
                 await client.query(
@@ -49,7 +46,7 @@ const createReporteCompleto = async (req, res) => {
             }
         }
 
-        // 3. Insertar Asistencia
+        // 3. Insertar Asistencia (si existe)
         if (asistencia && asistencia.length > 0) {
             for (const a of asistencia) {
                 await client.query(
@@ -61,20 +58,15 @@ const createReporteCompleto = async (req, res) => {
         }
 
         await client.query('COMMIT');
-        console.log(">>> ÉXITO: Reporte guardado con ID:", id_reporte);
         res.status(201).json({ mensaje: "Reporte guardado con éxito", id: id_reporte });
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error("!!! ERROR EN NUEVO CONTROLADOR !!!");
-        console.error(error.message);
-        res.status(500).json({ error: error.message });
+        console.error("ERROR EN CONTROLADOR:", error);
+        res.status(500).json({ mensaje: "Error al guardar reporte", error: error.message });
     } finally {
         client.release();
     }
 };
 
-
-module.exports = {
-    createReporteCompleto
-};
+module.exports = { createReporteCompleto };

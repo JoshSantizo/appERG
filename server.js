@@ -29,6 +29,7 @@ const catalogosRoutes = require('./routes/catalogosRoutes');
 const liderRoutes = require('./routes/liderRoutes');
 const lsrRoutes = require('./routes/lsrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const reportingRoutes = require('./routes/reportingRoutes');
 const memberRoutes = require('./routes/memberRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const { crearMiembroUniversal } = require('./controllers/liderController');
@@ -45,6 +46,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/lider', liderRoutes);
 app.use('/api/lsr', lsrRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/reportes', reportingRoutes);
 app.use('/api/miembros', memberRoutes); // Nota: Si memberRoutes tiene un GET '/', podría chocar con la de arriba
 app.post('/api/miembros', crearMiembroUniversal);
 app.use('/api', catalogosRoutes);
