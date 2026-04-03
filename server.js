@@ -24,6 +24,7 @@ const swaggerDocument = YAML.load('./docs/swagger.yaml');
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // --- 3. IMPORTACIÓN DE RUTAS ---
+const reportRoutes = require('./routes/reportRoutes');
 const authRoutes = require('./routes/authRoutes');
 const catalogosRoutes = require('./routes/catalogosRoutes');
 const liderRoutes = require('./routes/liderRoutes');
@@ -31,13 +32,11 @@ const lsrRoutes = require('./routes/lsrRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const reportingRoutes = require('./routes/reportingRoutes');
 const memberRoutes = require('./routes/memberRoutes');
-const reportRoutes = require('./routes/reportRoutes');
 const { crearMiembroUniversal } = require('./controllers/liderController');
 
 
 // --- 4. DEFINICIÓN DE RUTAS ---
-
-app.use('/api/test-envio', reportRoutes);
+app.use('/test-envio', reportRoutes);
 
 // Esta es la ruta universal que definimos para Daniela y todos los roles
 app.use('/api/ministerios',verifyToken,liderController.getMinisteriosLista)
